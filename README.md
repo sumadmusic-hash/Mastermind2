@@ -1,2 +1,94 @@
-# Mastermind2
-AI Research Assistant Rebuild
+# AI Research Assistant
+
+Ein KI-gestützter Forschungsassistent als vollständig clientseitige Web-App.
+
+## Features
+
+- **Chat mit Agent-Loop**: Multi-Provider-Chat mit Tool-Orchestrierung, Streaming, und automatischem Fallback
+- **31 Tools**: Web-Suche, Nachrichten, Finanzen, Datenanalyse, Memory, Automation
+- **Workflow-Builder**: Visueller Editor für Tool-Ketten (Drag & Drop)
+- **Scheduler**: Cron-artige geplante Aufgaben
+- **Lokale Persistenz**: Alle Daten in IndexedDB (Dexie), API-Keys nur im Browser
+- **7 Modell-Slots**: 1 Primär + 6 Fallbacks mit automatischem Failover
+
+## Setup
+
+### Voraussetzungen
+- Node.js 18+
+- Ein API-Key für mindestens einen Provider:
+  - **Groq** (empfohlen): Kostenlos unter [console.groq.com](https://console.groq.com)
+  - **OpenRouter**: Unter [openrouter.ai](https://openrouter.ai)
+  - **Google Gemini**: Unter [aistudio.google.com](https://aistudio.google.com)
+  - **LM Studio**: Lokal unter localhost:1234
+
+### Installation
+
+```bash
+npm install
+npm run dev
+```
+
+### Build
+
+```bash
+npm run build
+```
+
+### Commands
+
+| Befehl | Beschreibung |
+|--------|-------------|
+| `npm run dev` | Development-Server starten |
+| `npm run build` | Produktions-Build |
+| `npm run typecheck` | TypeScript-Prüfung |
+| `node scripts/check-file-size.js` | Dateigrößen-Check (max 1000 Zeilen) |
+
+## Architektur
+
+### Verzeichnisstruktur
+
+```
+src/
+├── types/              # Typen & Zod-Schemas
+├── services/
+│   ├── db/             # Dexie/IndexedDB (pro Domain eine Datei)
+│   ├── providers/      # Provider-Adapter (Adapter-Pattern)
+│   ├── agent/          # Agent-Loop, Orchestrierung
+│   ├── tools/          # Tool-Registry + Tool-Implementierungen
+│   └── shared/         # Hilfsfunktionen
+├── store/              # Zustand Stores
+├── components/         # UI-Komponenten
+└── pages/              # Seiten-Komposition
+```
+
+### Kern-Prinzipien
+
+1. **Keine Datei > 1000 Zeilen** – Automatischer Check im CI
+2. **Adapter-Pattern** für Provider – Erweiterbar ohne bestehende Dateien zu ändern
+3. **Tool = Modul** – Jedes Tool ist eine eigene Datei mit Definition + Execute
+4. **Relevanzselektion** – Nur kontextrelevante Tools pro Anfrage (~7k Token Ersparnis)
+5. **Dedup-Cache** – Identische Tool-Calls im selben Turn werden nicht wiederholt
+6. **Failover** – Bei Fehlern automatisch nächstes Modell probieren
+7. **SSRF-Schutz** – URL-Validierung bei allen externen Fetches
+
+### Provider
+
+| Provider | API | Streaming | Modelle |
+|----------|-----|-----------|---------|
+| Groq | OpenAI-kompatibel | ✅ SSE | Llama 3.x, Mixtral |
+| OpenRouter | OpenAI-kompatibel | ✅ SSE | Multi-Provider |
+| Gemini | Eigenes Format | ✅ SSE | Gemini 2.x |
+| LM Studio | OpenAI-kompatibel | ✅ SSE | Lokal |
+
+### Sicherheit
+
+- API-Keys nur in IndexedDB (nie auf Server)
+- SSRF-Schutz: Block interner IPs/Hostnames
+- Schema-Validierung für alle Tool-I/O (Zod)
+- Berechtigungsmodell pro Tool
+- Write-Guard für Scheduler-Ausführungen
+- Kein `eval`, kein KI-generierter ausführbarer Code
+
+## Lizenz
+
+MIT
