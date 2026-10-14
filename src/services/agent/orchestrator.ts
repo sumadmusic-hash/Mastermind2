@@ -43,9 +43,16 @@ export async function sendMessage(
   // Get settings
   const settings = await getSettings();
   const slots = settings.modelSlots.filter(s => settings.providers[s.providerId]?.enabled || s.providerId === 'lmstudio');
+  if (slots.length === 0) {
+    throw new Error('Kein Modell-Slot aktiv. Bitte in den Einstellungen mindestens einen Provider aktivieren und einen API-Key hinterlegen.');
+  }
   const apiKeys: Record<string, string> = {};
   for (const [pid, cfg] of Object.entries(settings.providers)) {
     apiKeys[pid] = cfg.apiKey;
+  }
+  const providerBaseUrls: Record<string, string> = {};
+  for (const [pid, cfg] of Object.entries(settings.providers)) {
+    if (cfg.baseUrl) providerBaseUrls[pid] = cfg.baseUrl;
   }
 
   // Build context
@@ -82,7 +89,7 @@ export async function sendMessage(
     let response;
     try {
       const result = await callWithFailover(
-        slots, currentMessages, relevantTools, apiKeys, settings.proxyBaseUrl, onChunk, abortSignal
+        slots, currentMessages, relevantTools, apiKeys, settings.proxyBaseUrl, onChunk, abortSignal, providerBaseUrls
       );
       response = result.response;
     } catch (err) {

@@ -6,22 +6,35 @@ import { CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import type { ProviderId, ModelSlot } from '../types/provider';
 
 export function SettingsPage() {
-  const { settings, setProviderKey, setModelSlots, updateSettings } = useAppStore();
+  const { settings, setProviderEnabled, setProviderBaseUrl, setProviderKey, setModelSlots, updateSettings } = useAppStore();
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, boolean | null>>({});
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
+  const [baseUrlInputs, setBaseUrlInputs] = useState<Record<string, string>>({});
+
+  // Key wird dauerhaft gespeichert, sobald das Eingabefeld den Fokus verlässt –
+  // unabhängig davon, ob der Verbindungstest erfolgreich war.
+  const handleSaveKey = async (providerId: string) => {
+    const raw = keyInputs[providerId];
+    if (raw === undefined) return; // nichts geändert
+    const key = raw.trim();
+    if (key === (settings.providers[providerId]?.apiKey || '')) return;
+    await setProviderKey(providerId, key);
+    setKeyInputs(prev => ({ ...prev, [providerId]: key }));
+  };
 
   const handleTestConnection = async (providerId: string) => {
     setTesting(providerId);
-    const key = keyInputs[providerId] || settings.providers[providerId]?.apiKey || '';
-    const baseUrl = resolveEndpoint(providerId as ProviderId);
+    setTestResult(prev => ({ ...prev, [providerId]: null }));
+    // Erst speichern, dann testen – sonst geht ein frisch eingetragener Key
+    // verloren, wenn der Test fehlschlägt oder die Seite gewechselt wird.
+    await handleSaveKey(providerId);
+    const key = (keyInputs[providerId] ?? '').trim() || settings.providers[providerId]?.apiKey || '';
+    const baseUrl = resolveEndpoint(providerId as ProviderId, baseUrlInputs[providerId]?.trim() || settings.providers[providerId]?.baseUrl);
     try {
       const adapter = getAdapter(providerId);
       const ok = await adapter.testConnection(key, baseUrl);
       setTestResult(prev => ({ ...prev, [providerId]: ok }));
-      if (ok && keyInputs[providerId]) {
-        await setProviderKey(providerId, keyInputs[providerId]);
-      }
     } catch {
       setTestResult(prev => ({ ...prev, [providerId]: false }));
     }
@@ -56,7 +69,16 @@ export function SettingsPage() {
                   <h4 className="font-medium">{provider.name}</h4>
                   <p className="text-xs text-gray-500">{provider.description}</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={settings.providers[provider.id]?.enabled ?? false}
+                      onChange={e => setProviderEnabled(provider.id, e.target.checked)}
+                      className="accent-blue-600"
+                    />
+                    Aktiv
+                  </label>
                   {testResult[provider.id] === true && <CheckCircle size={16} className="text-green-400" />}
                   {testResult[provider.id] === false && <XCircle size={16} className="text-red-400" />}
                   {testing === provider.id && <Loader2 size={16} className="animate-spin text-blue-400" />}
@@ -66,8 +88,9 @@ export function SettingsPage() {
                 <input
                   type="password"
                   placeholder="API-Key eingeben..."
-                  defaultValue={settings.providers[provider.id]?.apiKey || ''}
+                  value={keyInputs[provider.id] ?? settings.providers[provider.id]?.apiKey ?? ''}
                   onChange={e => setKeyInputs(prev => ({ ...prev, [provider.id]: e.target.value }))}
+                  onBlur={() => handleSaveKey(provider.id)}
                   className="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500"
                 />
                 <button
@@ -78,13 +101,18 @@ export function SettingsPage() {
                   Test
                 </button>
               </div>
-              {provider.id === 'lmstudio' && (
-                <input
-                  type="text"
-                  placeholder="Base URL (default: http://localhost:1234/v1)"
-                  defaultValue={settings.providers[provider.id]?.baseUrl || ''}
-                  className="mt-2 w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-blue-500"
-                />
+              <input
+                type="text"
+                placeholder={`Base URL (Standard: ${resolveEndpoint(provider.id)})`}
+                value={baseUrlInputs[provider.id] ?? settings.providers[provider.id]?.baseUrl ?? ''}
+                onChange={e => setBaseUrlInputs(prev => ({ ...prev, [provider.id]: e.target.value }))}
+                onBlur={e => setProviderBaseUrl(provider.id, e.target.value.trim())}
+                className="mt-2 w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-blue-500"
+              />
+              {testResult[provider.id] === false && (
+                <p className="mt-2 text-xs text-red-400">
+                  Test fehlgeschlagen (z.B. 401). Bitte API-Key prüfen – Leerzeichen am Anfang/Ende werden automatisch entfernt.
+                </p>
               )}
             </div>
           ))}

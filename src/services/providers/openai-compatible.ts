@@ -3,9 +3,15 @@ import { AuthProviderError, RateLimitError, EmptyResponseError, ProviderError } 
 import type { ProviderMessage, StreamChunk } from '../../types/provider';
 import type { ToolDefinition } from '../../types/tool';
 
-function resolveUrl(config: ProviderCallConfig, path: string): string {
+function resolveUrl(config: ProviderCallConfig, path: string, proxyBaseUrl?: string): string {
   const base = config.baseUrl || '';
-  return `${base}${path}`;
+  const targetUrl = `${base}${path}`;
+  if (proxyBaseUrl) {
+    // CORS-Proxy: erwartet die Ziel-URL als Query-Parameter, z.B. https://proxy.example/?url=
+    const sep = proxyBaseUrl.includes('?') ? '&' : '?';
+    return `${proxyBaseUrl}${sep}url=${encodeURIComponent(targetUrl)}`;
+  }
+  return targetUrl;
 }
 
 function mapToolDefsToOpenAI(tools: ToolDefinition[]) {
@@ -34,7 +40,7 @@ export async function streamOpenAICompatible(
   onChunk: ((chunk: StreamChunk) => void) | undefined,
   abortSignal?: AbortSignal
 ): Promise<ProviderResponse> {
-  const url = resolveUrl(config, '/chat/completions');
+  const url = resolveUrl(config, '/chat/completions', config.proxyBaseUrl);
   const body: Record<string, unknown> = {
     model: config.model,
     messages,
@@ -50,8 +56,9 @@ export async function streamOpenAICompatible(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (config.apiKey) {
-    headers['Authorization'] = `Bearer ${config.apiKey}`;
+  const apiKey = (config.apiKey || '').trim();
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
   }
   if (providerId === 'openrouter') {
     headers['HTTP-Referer'] = window.location.origin;
@@ -169,10 +176,14 @@ export function createOpenAICompatibleAdapter(providerId: string): ProviderAdapt
     async testConnection(apiKey, baseUrl) {
       try {
         const res = await fetch(`${baseUrl || ''}/models`, {
-          headers: { Authorization: `Bearer ${apiKey}` },
+          headers: { Authorization: `Bearer ${(apiKey || '').trim()}` },
         });
+        if (!res.ok) {
+          console.warn(`Verbindungstest ${providerId}: HTTP ${res.status}`, await res.text().catch(() => ''));
+        }
         return res.ok;
-      } catch {
+      } catch (err) {
+        console.warn(`Verbindungstest ${providerId}: Netzwerk-/CORS-Fehler`, err);
         return false;
       }
     },

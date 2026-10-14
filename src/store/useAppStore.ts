@@ -11,6 +11,8 @@ interface AppState {
   loadSettings: () => Promise<void>;
   updateSettings: (changes: Partial<AppSettings>) => Promise<void>;
   setProviderKey: (providerId: string, apiKey: string) => Promise<void>;
+  setProviderEnabled: (providerId: string, enabled: boolean) => Promise<void>;
+  setProviderBaseUrl: (providerId: string, baseUrl: string) => Promise<void>;
   setModelSlots: (slots: ModelSlot[]) => Promise<void>;
   setSidebarOpen: (open: boolean) => void;
   setCurrentPage: (page: string) => void;
@@ -39,7 +41,35 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...settings,
       providers: {
         ...settings.providers,
-        [providerId]: { ...settings.providers[providerId], apiKey },
+        [providerId]: { ...settings.providers[providerId], id: providerId as any, apiKey: apiKey.trim() },
+      },
+    };
+    await saveSettings(newSettings);
+    set({ settings: newSettings });
+  },
+
+  setProviderEnabled: async (providerId, enabled) => {
+    const settings = get().settings;
+    const newSettings = {
+      ...settings,
+      providers: {
+        ...settings.providers,
+        [providerId]: { ...settings.providers[providerId], id: providerId as any, enabled },
+      },
+    };
+    await saveSettings(newSettings);
+    set({ settings: newSettings });
+  },
+
+  setProviderBaseUrl: async (providerId, baseUrl) => {
+    const settings = get().settings;
+    const existing = settings.providers[providerId];
+    if ((existing?.baseUrl || '') === baseUrl) return; // nichts geändert
+    const newSettings = {
+      ...settings,
+      providers: {
+        ...settings.providers,
+        [providerId]: { ...existing, id: providerId as any, ...(baseUrl ? { baseUrl } : {}) },
       },
     };
     await saveSettings(newSettings);
