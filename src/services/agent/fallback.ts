@@ -14,6 +14,12 @@ export interface FailoverResult {
   attempts: number;
 }
 
+// Grobe Token-Schätzung (~4 Zeichen pro Token) für die TPM-Vorreservierung.
+function estimateTokens(messages: ProviderMessage[]): number {
+  const chars = messages.reduce((n, m) => n + (m.content?.length ?? 0), 0);
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
 export async function callWithFailover(
   slots: ModelSlot[],
   messages: ProviderMessage[],
@@ -22,14 +28,27 @@ export async function callWithFailover(
   proxyBaseUrl: string,
   onChunk?: (chunk: StreamChunk) => void,
   abortSignal?: AbortSignal,
-  providerBaseUrls?: Record<string, string>
+  providerBaseUrls?: Record<string, string>,
+  tpmLimit?: number
 ): Promise<FailoverResult> {
   let lastError: Error | null = null;
+  // Kumulierter Token-Verbrauch über alle Versuche dieses Failover-Durchlaufs.
+  let consumedTokens = 0;
+  const limit = tpmLimit && tpmLimit > 0 ? tpmLimit : 0; // 0 = kein Limit
 
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
     const apiKey = apiKeys[slot.providerId];
     if (!apiKey && slot.providerId !== 'lmstudio') continue;
+
+    // TPM-Limit auswerten: Wenn das Minutenbudget erschöpft ist, nicht weitere
+    // Provider anfragen (würde nur 429 produzieren), sondern klar abbrechen.
+    if (limit > 0) {
+      const estimated = estimateTokens(messages);
+      if (consumedTokens + estimated > limit) {
+        throw new Error(`TPM-Limit erreicht (${consumedTokens}+${estimated} > ${limit} Tokens/Minute). Versuch später erneut.`);
+      }
+    }
 
     const modelId = resolveModelId(slot.modelId);
     const baseUrl = resolveEndpoint(slot.providerId, providerBaseUrls?.[slot.providerId]);
@@ -42,8 +61,26 @@ export async function callWithFailover(
       proxyBaseUrl: proxyBaseUrl || undefined,
     };
 
+    // Wrapper um den Caller-onChunk: meldet dem Orchestrator einen Reset der
+    // Streaming-Anzeige, bevor dieser Versuch Text liefert. So wird textueller
+    // Rest eines fehlgeschlagenen Versuchs nie mit der Antwort des Fallbacks
+    // doppelt sichtbar ("Doppelte KI-Antwort bei Provider-Failover").
+    let resetDone = false;
+    const attemptOnChunk = onChunk ? ((chunk: StreamChunk) => {
+      if (!resetDone && chunk.type === 'text' && chunk.content) {
+        resetDone = true;
+        onChunk({ type: 'reset' });
+      }
+      onChunk(chunk);
+    }) : undefined;
+
     try {
-      const response = await adapter.call(config, messages, tools, onChunk, abortSignal);
+      const response = await adapter.call(config, messages, tools, attemptOnChunk, abortSignal);
+
+      // Token-Verbrauch für TPM-Buchung erfassen
+      if (response.usage) {
+        consumedTokens += response.usage.totalTokens || (response.usage.promptTokens + response.usage.completionTokens);
+      }
 
       // Check for content refusal
       if (response.content) {

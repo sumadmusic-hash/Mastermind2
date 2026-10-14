@@ -25,7 +25,10 @@ export interface AgentCallbacks {
   // Layer die fertige Antwort übernehmen, ohne dass Stream-Platzhalter und
   // persistierte Nachricht gleichzeitig sichtbar sind ("Antwort doppelt").
   onFinish?: (finalText: string) => void;
-  onToolCall?: (toolId: string, args: Record<string, unknown>) => void;
+  // callId gehört zum zugehörigen Tool-Call und erlaubt eine eindeutige
+  // Zuordnung des Ergebnisses, auch wenn dasselbe Tool mehrfach pro Turn
+  // aufgerufen wird.
+  onToolCall?: (toolId: string, args: Record<string, unknown>, callId: string) => void;
   onToolResult?: (result: ToolResult) => void;
   onStateChange?: (state: TurnState) => void;
   onError?: (error: Error) => void;
@@ -100,6 +103,12 @@ export async function sendMessage(
     // vor der Antwort des Fallback-Modells doppelt sichtbar wäre.
     let attemptSucceeded = false;
     const onChunk = (chunk: StreamChunk) => {
+      if (chunk.type === 'reset') {
+        // Neuer Provider-Versuch liefert Text: Anzeige auf leeren Stand setzen.
+        streamedText = '';
+        callbacks.onStreamReset?.();
+        return;
+      }
       if (chunk.type === 'text' && chunk.content) {
         streamedText += chunk.content;
         if (attemptSucceeded) {
@@ -114,7 +123,7 @@ export async function sendMessage(
     let response;
     try {
       const result = await callWithFailover(
-        slots, currentMessages, relevantTools, apiKeys, settings.proxyBaseUrl, onChunk, abortSignal, providerBaseUrls
+        slots, currentMessages, relevantTools, apiKeys, settings.proxyBaseUrl, onChunk, abortSignal, providerBaseUrls, settings.tpmLimit
       );
       attemptSucceeded = true;
       response = result.response;
@@ -148,7 +157,7 @@ export async function sendMessage(
         } catch {
           args = { raw: tc.arguments };
         }
-        callbacks.onToolCall?.(tc.name, args);
+        callbacks.onToolCall?.(tc.name, args, tc.id);
 
         const result = await dispatchToolCall(tc.name, args, {
           abortSignal,
