@@ -25,23 +25,93 @@ function err(error: string): ToolResult {
   return { callId: '', toolId: '', success: false, error, duration: 0, cached: false };
 }
 
+// Leeres Ergebnis = expliziter Fehlschlag (verhindert stumme Erfolgs-Meldungen
+// und Wiederholungsschleifen des Agenten bei ergebnislosen Anfragen)
+function emptyErr(message: string): ToolResult {
+  return err(`${message} – keine Treffer. Bitte nicht dieselbe Anfrage wiederholen, sondern dem Nutzer mitteilen, dass keine Ergebnisse vorliegen.`);
+}
+
+// Kompakte DDG-Antwort extrahieren: Abstract + AbstractText statt ganzer RelatedTopics-Bäume
+interface DdgTopic { Text?: string; FirstURL?: string; Topics?: DdgTopic[] }
+function flattenDdgTopics(topics: DdgTopic[] | undefined, depth = 0): DdgTopic[] {
+  if (!topics || depth > 2) return [];
+  const out: DdgTopic[] = [];
+  for (const t of topics) {
+    if (t.FirstURL) out.push(t);
+    else out.push(...flattenDdgTopics(t.Topics, depth + 1));
+  }
+  return out;
+}
+
 // --- SEARCH TOOLS ---
 toolRegistry.register(
-  def('ddg_web_search', 'DuckDuckGo Suche', 'Web-Suche über DuckDuckGo', 'search',
+  def('ddg_web_search', 'DuckDuckGo Suche', 'Web-Suche über DuckDuckGo. Liefert nur thematische Kurzantworten (Instant Answers), KEINE lokalen/tagesaktuellen Infos (z.B. Kinoprogramme). Bei leeren Treffern nicht erneut suchen.', 'search',
     { query: { type: 'string', description: 'Suchbegriff' }, max_results: { type: 'number', description: 'Max Ergebnisse (1-10)' } },
     ['network']),
   async (args) => {
     const query = args.query as string;
-    const maxResults = (args.max_results as number) || 5;
+    const maxResults = Math.min(Math.max((args.max_results as number) || 5, 1), 10);
     try {
       const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`);
+      if (!res.ok) return err(`Suchfehler: HTTP ${res.status}`);
       const data = await res.json();
-      const results = (data.RelatedTopics || []).slice(0, maxResults).map((t: Record<string, unknown>) => ({
-        title: (t.Text as string || '').split(' - ')[0] || '',
-        url: (t.FirstURL as string) || '',
-        snippet: (t.Text as string) || '',
-      })).filter((r: { url: string }) => r.url);
-      return ok(results, results.map((r: { title: string; url: string; snippet: string }) => ({ title: r.title, url: r.url, snippet: r.snippet })));
+      // Sofort-Kompaktantwort bevorzugen: 1 Request, minimale Tokens
+      if (data.AbstractText || data.Answer) {
+        const compact = [{
+          title: (data.Heading as string) || query,
+          url: (data.AbstractURL as string) || '',
+          snippet: (data.AbstractText as string) || String(data.Answer || ''),
+        }];
+        return ok(compact, compact);
+      }
+      const results = flattenDdgTopics(data.RelatedTopics)
+        .slice(0, maxResults).map((t) => ({
+          title: (t.Text || '').split(' - ')[0] || '',
+          url: t.FirstURL || '',
+          snippet: (t.Text || '').slice(0, 200),
+        })).filter((r) => r.url);
+      if (results.length === 0) return emptyErr(`Keine Suchtreffer für "${query}"`);
+      return ok(results, results);
+    } catch (e) { return err(`Suchfehler: ${(e as Error).message}`); }
+  }
+);
+
+// Optimierte Suche: Wikipedia-Summary-API – schlankste kostenlose Quelle.
+// 1 Request, CORS-fähig, liefert bereits aufbereitete Extrakte (~100–250 Tokens)
+// statt ganzer HTML-Seiten. Ideal um Tokens zu sparen.
+toolRegistry.register(
+  def('web_search', 'Optimierte Websuche', 'Token-sparende Recherche: liefert kompakte, aufbereitete Kurz-Zusammenfassungen (Snippet + URL) pro Treffer. Bevorzugt vor ddg_web_search/url_fetch.', 'search',
+    { query: { type: 'string', description: 'Suchbegriff' }, max_results: { type: 'number', description: 'Max Ergebnisse (1-5)' }, lang: { type: 'string', description: 'Sprache (de, en; Standard de)' } },
+    ['network']),
+  async (args) => {
+    const query = args.query as string;
+    const lang = ((args.lang as string) || 'de').slice(0, 2);
+    const maxResults = Math.min(Math.max((args.max_results as number) || 3, 1), 5);
+    try {
+      // Wikimedia drosselt requests ohne echten User-Agent (403) – Header setzen
+      const headers = { 'User-Agent': 'AIResearchAssistant/1.0 (browser-based research tool)' };
+      // Schritt 1: Titelvorschläge (Opensearch, sehr leichtgewichtig)
+      const sRes = await fetch(`https://${lang}.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=${maxResults}&format=json`, { headers, signal: AbortSignal.timeout(10000) });
+      if (!sRes.ok) return err(`Suchfehler: HTTP ${sRes.status}`);
+      const suggestions = await sRes.json() as [string, string[], string[], string[]];
+      const titles = suggestions[1] || [];
+      if (titles.length === 0) return emptyErr(`Keine Treffer für "${query}"`);
+      // Schritt 2: Kompakte Summaries parallel holen
+      const summaries = await Promise.all(titles.slice(0, maxResults).map(async (title) => {
+        try {
+          const r = await fetch(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`, { headers, signal: AbortSignal.timeout(10000) });
+          if (!r.ok) return null;
+          const d = await r.json();
+          return {
+            title: d.title as string,
+            snippet: ((d.extract as string) || '').slice(0, 300),
+            url: d.content_urls?.desktop?.page as string || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`,
+          };
+        } catch { return null; }
+      }));
+      const results = summaries.filter((s): s is NonNullable<typeof s> => s !== null && !!s.snippet);
+      if (results.length === 0) return emptyErr(`Keine verwertbaren Zusammenfassungen für "${query}"`);
+      return ok(results, results);
     } catch (e) { return err(`Suchfehler: ${(e as Error).message}`); }
   }
 );
@@ -85,6 +155,7 @@ toolRegistry.register(
         url: (t.FirstURL as string) || '',
         snippet: (t.Text as string) || '',
       })).filter((r: { url: string }) => r.url);
+      if (results.length === 0) return emptyErr(`Keine Nachrichtentreffer für "${query}"`);
       return ok(results);
     } catch (e) { return err(`Nachrichten-Fehler: ${(e as Error).message}`); }
   }

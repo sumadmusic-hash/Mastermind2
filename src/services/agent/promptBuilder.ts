@@ -7,6 +7,8 @@ Regeln:
 - Maximal 300 Wörter pro Antwort.
 - Nutze Tools wenn nötig (Web-Suche, Datenanalyse, etc.).
 - Maximal 3 Tool-Calls pro Turn.
+- Token-Sparen: bevorzuge 'web_search' (kompakte Zusammenfassungen) vor url_fetch (Roh-HTML).
+- Leere/erfolglose Suchergebnisse NICHT mit identischer Anfrage wiederholen; einmal umformulieren oder dem Nutzer ehrlich melden, dass keine Ergebnisse vorliegen.
 - Zitiere Quellen mit URLs wenn vorhanden.
 - Bei Unsicherheit: sage es ehrlich.`;
 
