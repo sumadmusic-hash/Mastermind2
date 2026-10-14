@@ -68,7 +68,12 @@ export async function updateRun(id: number, changes: Partial<ScheduledRun>): Pro
 
 export async function getDueJobs(): Promise<ScheduledJob[]> {
   const now = Date.now();
-  return db.scheduledJobs.where('enabled').equals(1).filter(j => j.nextRun <= now).toArray();
+  // `enabled` wird als echtes boolean gespeichert (schedule_create nutzt
+  // enabled: true, Dexie/IndexedDB kann keine booleschen Werte indizieren –
+  // der Index 'enabled' liefert daher nie Treffer für equals(1)). Deshalb
+  // bewusst ein full scan mit Filter, damit Jobs nicht stumm entfallen.
+  const jobs = await db.scheduledJobs.toArray();
+  return jobs.filter(j => j.enabled && j.nextRun <= now);
 }
 
 /**

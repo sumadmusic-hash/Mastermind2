@@ -40,23 +40,31 @@ export function parseCSV(csv: string): Record<string, string>[] {
 
   const rows: string[][] = [];
   let current: string[] = [];
+  let atFieldStart = true; // true am Zeilenanfang / direkt nach Trennzeichen
   let i = 0;
   while (i < csv.length) {
     const ch = csv[i];
     if (ch === '\n' || ch === '\r') {
+      // RFC 4180: ein Zeilenende BEI Feldstart ist eine leere Zeile – keine
+      // Spalte anhängen. Das verhindert Geister-Spalten bei CRLF-Dateien, wo
+      // das '\r' vor dem '\n' bereits als leere letzte Spalte gepusht wurde.
+      if (!atFieldStart) current.push('');
       rows.push(current);
       current = [];
-      i++;
+      atFieldStart = true;
+      i++++;
       if (ch === '\r' && csv[i] === '\n') i++; // \r\n als EIN Zeilenende
       continue;
     }
     if (ch === ',') {
       current.push('');
+      atFieldStart = false;
       i++;
       continue;
     }
     const field = parseField(csv, i);
     current.push(field.value);
+    atFieldStart = false;
     i = field.next;
     // Falls parseField nicht vorangekommen ist (Sonderfall leerer Rest),
     // ein Zeichen springen – verhindert eine Endlosschleife.
@@ -65,7 +73,7 @@ export function parseCSV(csv: string): Record<string, string>[] {
     }
   }
   // Letzte Zeile abschließen (falls Datei ohne Newline endet)
-  if (current.length > 0) rows.push(current);
+  if (current.length > 0 || !atFieldStart) rows.push(current);
 
   // Leere Zeilen filtern (wie früher: lines.filter(l => l.trim()))
   const nonEmpty = rows.filter(r => r.some(c => c.trim() !== ''));
