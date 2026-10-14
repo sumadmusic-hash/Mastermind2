@@ -1,6 +1,7 @@
 import type { ToolDefinition, ToolResult, ToolExecutionContext } from '../../types/tool';
 import { toolRegistry } from './registry';
 import { evaluateExpression } from '../shared/safeMath';
+import { fetchJson } from '../shared/fetch';
 
 // Helper to create a tool definition
 function def(
@@ -202,28 +203,130 @@ toolRegistry.register(
 );
 
 // --- FINANCE TOOLS ---
+
+// Yahoo liefert je nach Edge/Region unterschiedliche Fehlerbilder:
+// 429 "Too Many Requests" ohne Browser-User-Agent, teils HTML-Fehlerseiten
+// (auch mit Status 200) und vereinzelt JSON mit Error-Feld im Body.
+// Deshalb: mehrere Hosts der Chart-API durchprobieren + Retry mit Backoff.
+const YAHOO_CHART_HOSTS = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+interface YahooChartMeta {
+  symbol?: string;
+  regularMarketPrice?: number;
+  chartPreviousClose?: number;
+  previousClose?: number;
+  currency?: string;
+  exchangeName?: string;
+  fullExchangeName?: string;
+}
+interface YahooChartResponse {
+  chart?: {
+    result?: Array<{
+      meta?: YahooChartMeta;
+      timestamp?: (number | null)[];
+      indicators?: { quote?: Array<{ close?: (number | null)[] }>; adjclose?: Array<{ adjclose?: (number | null)[] }> };
+    }>;
+    error?: { code?: string; description?: string } | null;
+  };
+}
+
+function toNumberOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Letzten nicht-leeren Wert einer Zeitreihe holen */
+function lastValue(series: (number | null)[] | undefined): number | null {
+  if (!series || series.length === 0) return null;
+  for (let i = series.length - 1; i >= 0; i--) {
+    const n = toNumberOrNull(series[i]);
+    if (n !== null) return n;
+  }
+  return null;
+}
+
+function formatDate(ts: number | null | undefined): string | undefined {
+  if (!ts) return undefined;
+  const d = new Date(ts * 1000);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString().slice(0, 10);
+}
+
+async function fetchYahooChart(ticker: string): Promise<YahooChartResponse> {
+  let lastError = '';
+  for (const host of YAHOO_CHART_HOSTS) {
+    const url = `https://${host}/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5d&includePrePost=false`;
+    try {
+      // fetchJson: wiederholt bei 429/403/5xx/Netzwerkfehler und wandelt
+      // HTML-statt-JSON in eine verständliche Meldung um (kein rohes
+      // "Unexpected token '<' …is not valid JSON")
+      return await fetchJson<YahooChartResponse>(url, {
+        headers: { 'User-Agent': BROWSER_UA, 'Accept': 'application/json' },
+        label: 'Yahoo Finance',
+        retries: 2,
+        timeout: 12000,
+      });
+    } catch (e) {
+      lastError = (e as Error).message;
+    }
+  }
+  throw new Error(lastError || 'Yahoo Finance nicht erreichbar');
+}
+
 toolRegistry.register(
-  def('stock_price', 'Aktienkurs', 'Aktuellen Aktienkurs abrufen', 'finance',
-    { ticker: { type: 'string', description: 'Ticker-Symbol (z.B. AAPL, SAP.DE)' } },
+  def('stock_price', 'Aktienkurs', 'Aktuellen Aktienkurs inkl. Tagesverlauf abrufen', 'finance',
+    { ticker: { type: 'string', description: 'Ticker-Symbol (z.B. AAPL, NVDA, SAP.DE – für XETRA/Deutsche Börse mit Endung .DE)' } },
     ['network']),
   async (args) => {
-    const ticker = args.ticker as string;
+    const raw = String(args.ticker ?? '').trim();
+    if (!raw) return err('Kein Ticker angegeben');
+    const ticker = raw.toUpperCase();
     try {
-      const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5d`);
-      if (!res.ok) return err(`HTTP ${res.status}`);
-      const data = await res.json();
-      const result = data.chart?.result?.[0];
-      if (!result) return err('Keine Daten gefunden');
-      const meta = result.meta;
+      const data = await fetchYahooChart(ticker);
+      const chart = data.chart;
+      if (chart?.error) {
+        return err(`Yahoo Finance: ${chart.error.description || chart.error.code || 'Unbekannter Fehler'} (Ticker "${ticker}" prüfen, z.B. NVDA oder SAP.DE)`);
+      }
+      const result = chart?.result?.[0];
+      const meta = result?.meta;
+      if (!result || !meta) {
+        return err(`Keine Kursdaten für "${ticker}" gefunden. Bitte gültiges Yahoo-Ticker-Symbol verwenden (US: NVDA, DE: SAP.DE).`);
+      }
+
+      const closes = result.indicators?.quote?.[0]?.close;
+      const price = toNumberOrNull(meta.regularMarketPrice) ?? lastValue(closes);
+      if (price === null) {
+        return err(`Kurswert für "${ticker}" nicht verfügbar (Markt geschlossen oder ungültiger Ticker).`);
+      }
+      const prevClose = toNumberOrNull(meta.chartPreviousClose) ?? toNumberOrNull(meta.previousClose);
+      const changePct = prevClose && prevClose !== 0
+        ? ((price - prevClose) / prevClose * 100).toFixed(2) + '%'
+        : undefined;
+
+      // Kompakter Tagesverlauf (Datum + Schluss), damit die KI den Trend sieht
+      const history = (result.timestamp || []).map((ts, i) => ({
+        date: formatDate(ts),
+        close: toNumberOrNull(closes?.[i]) ?? undefined,
+      })).filter((h) => h.close !== undefined && h.close !== null);
+
       return ok({
-        ticker: meta.symbol,
-        price: meta.regularMarketPrice,
+        ticker: meta.symbol || ticker,
+        price,
         currency: meta.currency,
-        exchange: meta.exchangeName,
-        previousClose: meta.chartPreviousClose,
-        change: ((meta.regularMarketPrice - meta.chartPreviousClose) / meta.chartPreviousClose * 100).toFixed(2) + '%',
+        exchange: meta.fullExchangeName || meta.exchangeName,
+        previousClose: prevClose ?? undefined,
+        change: changePct,
+        history,
+        source: 'Yahoo Finance Chart API',
       });
-    } catch (e) { return err(`Aktien-Fehler: ${(e as Error).message}`); }
+    } catch (e) {
+      const msg = (e as Error).message;
+      // Nie eine rohe SyntaxError durchreichen – der Agent soll erkennen,
+      // dass es ein Server-/Rate-Limit-Problem ist, kein Ticker-Problem.
+      if (/HTML statt JSON|zu viele Anfragen|Too Many Requests|HTTP 429/i.test(msg)) {
+        return err(`Aktienkurs-Anfrage abgelehnt (Raten-Begrenzung des Dienstes): ${msg}. Nicht erneut versuchen; stattdessen web_search/ai_search für den aktuellen Kurs nutzen.`);
+      }
+      return err(`Aktien-Fehler: ${msg}`);
+    }
   }
 );
 
@@ -234,8 +337,10 @@ toolRegistry.register(
   async (args) => {
     const { amount, from, to } = args as { amount: number; from: string; to: string };
     try {
-      const res = await fetch(`https://open.er-api.com/v6/latest/${from.toUpperCase()}`);
-      const data = await res.json();
+      const data = await fetchJson<{ rates?: Record<string, number> }>(
+        `https://open.er-api.com/v6/latest/${from.toUpperCase()}`,
+        { label: 'Währungs-API', retries: 2 }
+      );
       const rate = data.rates?.[to.toUpperCase()];
       if (!rate) return err(`Kein Kurs für ${from}/${to}`);
       return ok({ amount, from: from.toUpperCase(), to: to.toUpperCase(), rate, converted: (amount * rate).toFixed(2) });
@@ -525,7 +630,12 @@ toolRegistry.register(
     { ticker: { type: 'string', description: 'Ticker-Symbol' } },
     ['network']),
   async (args) => {
-    const result = await toolRegistry.execute('stock_price', args, { origin: 'user', sessionId: '' });
+    // stock_price erwartet `ticker`; Argument-Namen der aufrufenden KI können
+    // variieren – hier normalisieren, damit die Analyse nicht wegen fehlendem
+    // Pflichtfeld fehlschlägt.
+    const ticker = String((args as Record<string, unknown>).ticker ?? '').trim();
+    if (!ticker) return err('Kein Ticker angegeben');
+    const result = await toolRegistry.execute('stock_price', { ticker }, { origin: 'user', sessionId: '' });
     if (!result.success) return result;
     return ok({ ...result.data as object, analysis: 'Automatische Analyse basierend auf aktuellen Kursdaten' });
   }
