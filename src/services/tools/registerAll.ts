@@ -116,6 +116,32 @@ toolRegistry.register(
   }
 );
 
+// Jina Search Grounding: kostenlose, KI-aufbereitete Suchantwort (Antwort + Quellen
+// in einem Request). Ohne API-Key mit Rate-Limit; optionaler Key per args.api_key.
+toolRegistry.register(
+  def('ai_search', 'KI-Suche (Jina)', 'Token-sparende Recherche: liefert eine bereits von einer KI aufbereitete Kurzantwort mit Quellenangaben. Erspart deiner KI das Lesen ganzer Seiten. Optional api_key für höheres Rate-Limit.', 'search',
+    { query: { type: 'string', description: 'Suchfrage' }, api_key: { type: 'string', description: 'Optional: Jina-API-Key (erhöht Rate-Limit)' } },
+    ['network']),
+  async (args) => {
+    const query = args.query as string;
+    const apiKey = (args.api_key as string) || '';
+    try {
+      const res = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
+        headers: {
+          'Accept': 'text/plain',
+          'x-return-format': 'markdown',
+          ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {}),
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) return err(`KI-Suche fehlgeschlagen: HTTP ${res.status}${res.status === 429 ? ' (Rate-Limit ohne Key – bitte später erneut versuchen oder url_fetch nutzen)' : ''}`);
+      const text = await res.text();
+      if (text.trim().length < 40) return emptyErr('KI-Suche lieferte keine verwertbare Antwort');
+      return ok({ answer: text.slice(0, 4000) });
+    } catch (e) { return err(`KI-Suche-Fehler: ${(e as Error).message}`); }
+  }
+);
+
 toolRegistry.register(
   def('url_fetch', 'URL Abruf', 'Inhalt einer Webseite abrufen', 'search',
     { url: { type: 'string', description: 'URL der Webseite' } },
@@ -131,6 +157,20 @@ toolRegistry.register(
       if (hostname.endsWith('.local') || hostname.endsWith('.internal')) return err('Interne Hostnamen blockiert');
     } catch { return err('Ungültige URL'); }
 
+    // Token-sparende Vorstufe: Jina Reader liefert bereits aufbereitetes Markdown
+    // (Header x-respond-with) statt HTML-Rohtext; bei Fehler/CORS -> direkter Fallback.
+    try {
+      const jr = await fetch(`https://r.jina.ai/${url}`, {
+        headers: { 'Accept': 'text/plain', 'x-respond-with': 'markdown' },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (jr.ok) {
+        const md = await jr.text();
+        if (md.trim().length > 80) {
+          return ok({ url, source: 'jina-reader', contentLength: md.length, preview: md.slice(0, 3000) });
+        }
+      }
+    } catch { /* CORS/Timeout -> Fallback unten */ }
     try {
       const res = await fetch(url, { headers: { 'User-Agent': 'AIResearchAssistant/1.0' }, signal: AbortSignal.timeout(15000) });
       const text = await res.text();
