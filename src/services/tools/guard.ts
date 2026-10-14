@@ -4,6 +4,7 @@ const WRITE_TOOLS = new Set([
   'memory_save', 'memory_forget',
   'portfolio_update',
   'schedule_create', 'schedule_remove',
+  'calendar_create', 'calendar_remove',
   'export_file',
 ]);
 

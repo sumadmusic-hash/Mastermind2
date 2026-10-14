@@ -579,6 +579,79 @@ toolRegistry.register(
   }
 );
 
+// --- CALENDAR TOOLS (Termine) ---
+// Datumsformat: YYYY-MM-DD; relative Angaben ("morgen", "nächste Woche")
+// muss die KI anhand des heutigen Datums aus dem System-Prompt auflösen.
+toolRegistry.register(
+  def('calendar_create', 'Termin erstellen', 'Kalendereintrag/Termin anlegen mit Titel, Datum (YYYY-MM-DD), Uhrzeit (HH:MM), Dauer und optional Teilnehmern/Ort. Relative Datumsangaben vorher in ein konkretes Datum umrechnen.', 'calendar',
+    {
+      title: { type: 'string', description: 'Titel des Termins' },
+      date: { type: 'string', description: 'Datum im Format YYYY-MM-DD' },
+      time: { type: 'string', description: 'Startzeit im Format HH:MM (24h)' },
+      duration_min: { type: 'number', description: 'Dauer in Minuten (Standard 60)' },
+      description: { type: 'string', description: 'Notiz/Hinweis (optional)' },
+      location: { type: 'string', description: 'Ort (optional)' },
+      participants: { type: 'string', description: 'Teilnehmer, kommagetrennt (optional)' },
+    },
+    ['write', 'storage']),
+  async (args) => {
+    const a = args as Record<string, unknown>;
+    const title = String(a.title ?? '').trim();
+    if (!title) return err('Kein Titel angegeben');
+    try {
+      const { addEvent, findConflicts } = await import('../db/calendar');
+      const date = String(a.date ?? '');
+      const time = String(a.time ?? '');
+      const durationMin = Number(a.duration_min) || 60;
+      const conflicts = await findConflicts(date, time, durationMin);
+      const id = await addEvent({
+        title, date, time, durationMin,
+        description: a.description ? String(a.description) : undefined,
+        location: a.location ? String(a.location) : undefined,
+        participants: a.participants ? String(a.participants) : undefined,
+      });
+      return ok({
+        created: true, id, title, date, time, durationMin,
+        warning: conflicts.length > 0
+          ? `Konflikt: ${conflicts.map((c) => `${c.time} "${c.title}"`).join(', ')} überschneiden sich mit diesem Termin.`
+          : undefined,
+      });
+    } catch (e) { return err(`Termin konnte nicht erstellt werden: ${(e as Error).message}`); }
+  }
+);
+
+toolRegistry.register(
+  def('calendar_list', 'Termine anzeigen', 'Termine aus dem lokalen Kalender auflisten, optional gefiltert nach Datumsbereich (from/to als YYYY-MM-DD).', 'calendar',
+    { from: { type: 'string', description: 'Ab-Datum YYYY-MM-DD (optional)' }, to: { type: 'string', description: 'Bis-Datum YYYY-MM-DD (optional)' } },
+    ['storage']),
+  async (args) => {
+    try {
+      const { listEvents } = await import('../db/calendar');
+      const from = args.from ? String(args.from) : undefined;
+      const to = args.to ? String(args.to) : undefined;
+      const events = await listEvents(from, to);
+      return ok({ events, count: events.length });
+    } catch (e) { return err(`Termine konnten nicht geladen werden: ${(e as Error).message}`); }
+  }
+);
+
+toolRegistry.register(
+  def('calendar_remove', 'Termin löschen', 'Einen Termin per ID aus dem lokalen Kalender entfernen.', 'calendar',
+    { event_id: { type: 'number', description: 'ID des Termins (aus calendar_list)' } },
+    ['write', 'storage']),
+  async (args) => {
+    const id = Number(args.event_id);
+    if (!Number.isFinite(id)) return err('Keine gültige Termin-ID angegeben');
+    try {
+      const { removeEvent } = await import('../db/calendar');
+      const removed = await removeEvent(id);
+      if (!removed) return err(`Kein Termin mit ID ${id} gefunden`);
+      return ok({ removed: true, id });
+    } catch (e) { return err(`Termin konnte nicht gelöscht werden: ${(e as Error).message}`); }
+  }
+);
+
+
 // --- ADDITIONAL NEWS ---
 toolRegistry.register(
   def('web_search', 'Web-Suche', 'Allgemeine Web-Suche', 'search',
