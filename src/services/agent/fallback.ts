@@ -21,7 +21,8 @@ export async function callWithFailover(
   apiKeys: Record<string, string>,
   proxyBaseUrl: string,
   onChunk?: (chunk: StreamChunk) => void,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  providerBaseUrls?: Record<string, string>
 ): Promise<FailoverResult> {
   let lastError: Error | null = null;
 
@@ -31,11 +32,11 @@ export async function callWithFailover(
     if (!apiKey && slot.providerId !== 'lmstudio') continue;
 
     const modelId = resolveModelId(slot.modelId);
-    const baseUrl = resolveEndpoint(slot.providerId);
+    const baseUrl = resolveEndpoint(slot.providerId, providerBaseUrls?.[slot.providerId]);
     const adapter = getAdapter(slot.providerId);
 
     const config: ProviderCallConfig = {
-      apiKey,
+      apiKey: (apiKey || '').trim(),
       baseUrl,
       model: modelId,
       proxyBaseUrl: proxyBaseUrl || undefined,
