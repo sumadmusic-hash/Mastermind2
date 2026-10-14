@@ -40,37 +40,46 @@ export function parseCSV(csv: string): Record<string, string>[] {
 
   const rows: string[][] = [];
   let current: string[] = [];
-  let atFieldStart = true; // true am Zeilenanfang / direkt nach Trennzeichen
+  let atFieldStart = true; // true am Zeilenanfang und direkt nach jedem Komma
   let i = 0;
   while (i < csv.length) {
     const ch = csv[i];
     if (ch === '\n' || ch === '\r') {
-      // RFC 4180: ein Zeilenende BEI Feldstart ist eine leere Zeile – keine
-      // Spalte anhängen. Das verhindert Geister-Spalten bei CRLF-Dateien, wo
-      // das '\r' vor dem '\n' bereits als leere letzte Spalte gepusht wurde.
-      if (!atFieldStart) current.push('');
+      // RFC 4180: ein Zeilenende BEI Feldstart beendet die Zeile, OHNE eine
+      // weitere Spalte anzuhängen. Das verhindert die Geister-Spalte '' bei
+      // CRLF-Dateien, wo das '\r' sonst als separates leeres Feld zählte.
+      if (!atFieldStart) current.push(''); // echtes leeres Schlussfeld ('a,')
       rows.push(current);
       current = [];
       atFieldStart = true;
-      i++++;
+      i++;
       if (ch === '\r' && csv[i] === '\n') i++; // \r\n als EIN Zeilenende
       continue;
     }
     if (ch === ',') {
-      current.push('');
+      // Trennzeichen: das FELD DAVOR wurde bereits von parseField gelesen und
+      // gepusht – der Komma-Zweig pusht nichts Eigenes. atFieldStart bleibt/
+      // wird auf false gesetzt, damit ein ECHTES leeres Schlussfeld ("a,")
+      // beim folgenden Zeilenende als '' gezählt wird. Ein '\r'\n bei
+      // Feldstart (direkt nach Separador) würde andernfalls Geister-Spalten
+      // erzeugen – verhindert das die !atFieldStart-Bedingung nicht? Doch:
+      // nach '\n'/'\r' bei atFieldStart==true wird nichts gepusht, und nach
+      // einem Komma ist das Folgezeichen entweder ein Feldstart (wird von
+      // parseField gelesen) oder das Zeilenende selbst – Letzteres zählt nur
+      // dann als leeres Feld, wenn direkt zuvor ein Komma stand... Genau das
+      // ist RFC-4180-Konvention: "a," hat ein leeres zweites Feld, "a" nicht.
       atFieldStart = false;
       i++;
       continue;
     }
+    // Hier beginnt garantiert ein Feld (kein Separador/Zeilenende).
+    // parseField liest quotiert oder bis zum nächsten Separador/Zeilenende;
+    // bei "a,,b" sieht es direkt das nächste Komma und liefert ''.
     const field = parseField(csv, i);
     current.push(field.value);
     atFieldStart = false;
-    i = field.next;
-    // Falls parseField nicht vorangekommen ist (Sonderfall leerer Rest),
-    // ein Zeichen springen – verhindert eine Endlosschleife.
-    if (i === field.next && i < csv.length && csv[i] !== ',' && csv[i] !== '\n' && csv[i] !== '\r') {
-      i++;
-    }
+    if (field.next === i) i++; // Sicherheitsinkrement gegen Endlosschleifen
+    else i = field.next;
   }
   // Letzte Zeile abschließen (falls Datei ohne Newline endet)
   if (current.length > 0 || !atFieldStart) rows.push(current);
