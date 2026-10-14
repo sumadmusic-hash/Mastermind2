@@ -9,8 +9,10 @@ const KEYWORD_MAP: Record<string, string[]> = {
   web: ['ddg_web_search', 'url_fetch', 'web_search'],
   fetch: ['url_fetch'],
   url: ['url_fetch'],
-  news: ['news_search', 'webz_news', 'webz_top_news', 'gnews_search', 'gnews_top_headlines'],
-  aktuell: ['news_search', 'webz_news', 'gnews_top_headlines'],
+  // Nur das echte News-Tool anbieten – die webz_*/gnews_*-Aliase waren
+  // Deckblätter für dieselbe Quelle und provozierten Mehrfach-Fehlschläge.
+  news: ['news_search'],
+  aktuell: ['news_search'],
   aktie: ['stock_price', 'stock_analysis'],
   stock: ['stock_price', 'stock_analysis'],
   kurs: ['stock_price'],
