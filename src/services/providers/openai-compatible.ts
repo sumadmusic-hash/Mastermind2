@@ -25,11 +25,15 @@ function mapToolDefsToOpenAI(tools: ToolDefinition[]) {
   }));
 }
 
-function parseSSELine(line: string): { data: string } | null {
-  if (line.startsWith('data: ')) {
-    return { data: line.slice(6) };
-  }
-  return null;
+export function parseSSELine(rawLine: string): { data: string } | null {
+  // SSE-Spezifikation: Das eine optionale Leerzeichen nach "data:" wird entfernt,
+  // "data:{json}" und "data:  {json}" sind equally gültig. Viele Server senden
+  // ohne Leerzeichen – daher Präfix flexibel abschneiden.
+  const line = rawLine.replace(/\r$/, '').trim();
+  if (!line.startsWith('data:')) return null;
+  let data = line.slice(5);
+  if (data.startsWith(' ')) data = data.slice(1);
+  return { data };
 }
 
 export async function streamOpenAICompatible(
@@ -139,12 +143,26 @@ async function parseSSEStream(
         }
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
-            const idx = tc.index || 0;
-            if (!toolCalls[idx]) {
+            // Provider senden tool_calls mit index 0..n. Wenn ein Provider
+            // (oder ein kaputter Stream) Lücken lässt, würde ein löchriges (sparse) Array
+            // entstehen – `toolCalls.length` wäre dann größer als die Anzahl
+            // realer Einträge und `.map()` würde über undefined-Locher iterieren
+            // (Absturz bei tc.id). Deshalb: fehlende Indizes überspringen und
+            // das Array am Ende verdichten.
+            if (tc == null) continue;
+            const idx = Number.isInteger(tc.index) ? tc.index : toolCalls.length;
+            if (idx < 0) continue;
+            if (idx >= toolCalls.length) {
+              // Lücke im Stream -> neuen Call anhängen statt das Array löchrig zu machen
+              toolCalls.push({ id: tc.id || '', name: tc.function?.name || '', arguments: '' });
+            } else if (!toolCalls[idx]) {
               toolCalls[idx] = { id: tc.id || '', name: tc.function?.name || '', arguments: '' };
             }
+            const slot = toolCalls[idx];
+            if (tc.id) slot.id = tc.id;
+            if (tc.function?.name) slot.name = tc.function.name;
             if (tc.function?.arguments) {
-              toolCalls[idx].arguments += tc.function.arguments;
+              slot.arguments += tc.function.arguments;
             }
           }
         }
@@ -158,10 +176,15 @@ async function parseSSEStream(
     throw new EmptyResponseError(providerId);
   }
 
+  // Verdichten: falls der Stream Lücken hinterlassen hat (theoretisch durch
+  // obige Logik verhindert, hier als Sicherheitsnetz), niemals sparse Arrays
+  // an den Orchestrator weitergeben – sonst bricht .map() über undefined-Lochern.
+  const denseToolCalls = toolCalls.filter(Boolean);
+
   onChunk?.({ type: 'done' });
   return {
     content: fullContent,
-    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    toolCalls: denseToolCalls.length > 0 ? denseToolCalls : undefined,
     usage,
     finishReason: 'stop',
   };

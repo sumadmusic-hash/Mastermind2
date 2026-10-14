@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { toolRegistry } from '../services/tools/registry';
 import '../services/tools/registerAll';
+import { getSettings, setToolEnabled } from '../services/db/settings';
 import type { ToolDefinition } from '../types/tool';
 
 export function ToolsPage() {
   const [tools, setTools] = useState<ToolDefinition[]>([]);
+  // enabledTools aus den Einstellungen: fehlender Eintrag => aktiv (Default true)
+  const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>({});
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [testArgs, setTestArgs] = useState('{}');
   const [testResult, setTestResult] = useState<string>('');
@@ -13,7 +16,17 @@ export function ToolsPage() {
 
   useEffect(() => {
     setTools(toolRegistry.getAll());
+    getSettings().then(s => setEnabledMap(s.enabledTools || {}));
   }, []);
+
+  const isEffectiveEnabled = (t: ToolDefinition): boolean =>
+    t.enabled && enabledMap[t.id] !== false;
+
+  const handleToggle = async (toolId: string) => {
+    const next = !(enabledMap[toolId] !== false);
+    setEnabledMap(prev => ({ ...prev, [toolId]: next }));
+    await setToolEnabled(toolId, next);
+  };
 
   const filteredTools = tools.filter(t =>
     t.id.toLowerCase().includes(filter.toLowerCase()) ||
@@ -70,7 +83,7 @@ export function ToolsPage() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="truncate">{tool.name}</span>
-                    <span className={`w-2 h-2 rounded-full ${tool.enabled ? 'bg-green-400' : 'bg-gray-600'}`} />
+                    <span className={`w-2 h-2 rounded-full ${isEffectiveEnabled(tool) ? 'bg-green-400' : 'bg-gray-600'}`} />
                   </div>
                   <span className="text-gray-600 font-mono">{tool.id}</span>
                 </button>
@@ -86,11 +99,23 @@ export function ToolsPage() {
               <div className="flex items-center gap-3 mb-3">
                 <h3 className="text-lg font-semibold">{selected.name}</h3>
                 <span className={`px-2 py-0.5 rounded text-xs ${
-                  selected.enabled ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-400'
+                  isEffectiveEnabled(selected) ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-400'
                 }`}>
-                  {selected.enabled ? 'Aktiv' : 'Inaktiv'}
+                  {isEffectiveEnabled(selected) ? 'Aktiv' : 'Inaktiv'}
                 </span>
                 <span className="px-2 py-0.5 bg-gray-700 rounded text-xs text-gray-400">{selected.category}</span>
+                {/* Schalter: schreibt settings.enabledTools – der Orchestrator
+                    wertet dieses Map bei der Tool-Auswahl aus (vorher ignoriert). */}
+                <button
+                  onClick={() => handleToggle(selected.id)}
+                  className={`ml-auto px-3 py-1 rounded text-xs border transition-colors ${
+                    isEffectiveEnabled(selected)
+                      ? 'border-red-600/40 text-red-400 hover:bg-red-900/30'
+                      : 'border-green-600/40 text-green-400 hover:bg-green-900/30'
+                  }`}
+                >
+                  {isEffectiveEnabled(selected) ? 'Deaktivieren' : 'Aktivieren'}
+                </button>
               </div>
               <p className="text-sm text-gray-400 mb-4">{selected.description}</p>
 
