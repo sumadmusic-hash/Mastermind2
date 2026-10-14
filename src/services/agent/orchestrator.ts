@@ -16,6 +16,10 @@ const CONTEXT_BUDGET_TOKENS = 24000;
 
 export interface AgentCallbacks {
   onStream?: (text: string) => void;
+  // Setzt die Streaming-Anzeige zurück. Wird vor dem ersten Text-Delta eines
+  // jeden Provider-Versuchs ausgelöst, damit bei einem Failover nie Text
+  // mehrerer Versuche (bzw. doppelt) sichtbar wird.
+  onStreamReset?: () => void;
   // Wird einmalig mit dem finalen Antworttext aufgerufen, BEVOR dieser
   // persistiert und `onStateChange('done')` ausgelöst wird. So kann der UI-
   // Layer die fertige Antwort übernehmen, ohne dass Stream-Platzhalter und
@@ -89,10 +93,21 @@ export async function sendMessage(
     }
 
     let streamedText = '';
+    // Streaming-Modus wird erst gesetzt, wenn `callWithFailover` erfolgreich
+    // abgeschlossen wurde. Vorher sendet onChunk den kumulierten Text per
+    // "Reset" – so bleibt bei einem Failover (Timeout/Abbruch mitten im
+    // Stream) nie Text eines fehlgeschlagenen Versuchs stehen, der sonst
+    // vor der Antwort des Fallback-Modells doppelt sichtbar wäre.
+    let attemptSucceeded = false;
     const onChunk = (chunk: StreamChunk) => {
       if (chunk.type === 'text' && chunk.content) {
         streamedText += chunk.content;
-        callbacks.onStream?.(chunk.content);
+        if (attemptSucceeded) {
+          callbacks.onStream?.(chunk.content);
+        } else {
+          callbacks.onStreamReset?.();
+          callbacks.onStream?.(streamedText);
+        }
       }
     };
 
@@ -101,6 +116,7 @@ export async function sendMessage(
       const result = await callWithFailover(
         slots, currentMessages, relevantTools, apiKeys, settings.proxyBaseUrl, onChunk, abortSignal, providerBaseUrls
       );
+      attemptSucceeded = true;
       response = result.response;
     } catch (err) {
       callbacks.onError?.(err as Error);
