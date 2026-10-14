@@ -8,7 +8,7 @@ import { callWithFailover } from './fallback';
 import { selectRelevantTools } from '../tools/relevance';
 import { toolRegistry } from '../tools/registry';
 import { addMessage, getSession } from '../db/chats';
-import { getSettings } from '../db/settings';
+import { getSettings, applyEnabledTools } from '../db/settings';
 import { v4 as uuid } from 'uuid';
 
 const MAX_AGENT_ITERATIONS = 5;
@@ -82,7 +82,10 @@ export async function sendMessage(
   );
 
   const systemPrompt = buildSystemPrompt();
-  const allTools = toolRegistry.getEnabled();
+  // enabledTools auswerten: Registry-seitig aktive Tools UND per Settings
+  // nicht deaktiverte Tools. Fehlt ein Eintrag in settings.enabledTools,
+  // gilt das Tool als aktiv (Default true).
+  const allTools = applyEnabledTools(toolRegistry.getEnabled(), settings.enabledTools);
   const relevantTools = selectRelevantTools(userContent, allTools);
 
   let iteration = 0;

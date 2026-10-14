@@ -328,9 +328,17 @@ toolRegistry.register(
     ['write']),
   async (args) => {
     const { name, cron_spec, tool_id, args: toolArgs } = args as { name: string; cron_spec: string; tool_id: string; args: string };
-    const { createJob } = await import('../db/scheduler');
-    const id = await createJob({ name, cronSpec: cron_spec, toolId: tool_id, args: toolArgs, enabled: true, nextRun: Date.now() + 3600000, createdAt: Date.now() });
-    return ok({ created: true, id, name });
+    // Validierung: nur einfacher 5-Felder-Cron mit '*' oder Zahlen wird unterstützt
+    const parts = (cron_spec || '').trim().split(/\s+/);
+    if (parts.length !== 5 || !parts.every(p => p === '*' || /^\d+$/.test(p))) {
+      return err(`Ungültiger Cron-Ausdruck: "${cron_spec}". Unterstützt: 5 Felder (Minute Stunde Tag Monat Wochentag), je '*' oder Zahl.`);
+    }
+    const { createJob, computeNextRun } = await import('../db/scheduler');
+    // nextRun aus dem cronSpec berechnen statt hartkodiert +1h – sonst läuft
+    // der Job unabhängig vom Plan immer stündlich bzw. (bei getDueJobs ohne
+    // Update) potenziell in einer Endlosschleife.
+    const id = await createJob({ name, cronSpec: cron_spec, toolId: tool_id, args: toolArgs, enabled: true, nextRun: computeNextRun(cron_spec), createdAt: Date.now() });
+    return ok({ created: true, id, name, nextRun: computeNextRun(cron_spec) });
   }
 );
 

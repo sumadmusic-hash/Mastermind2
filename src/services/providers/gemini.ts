@@ -130,8 +130,13 @@ export const geminiAdapter: ProviderAdapter = {
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
+        // SSE-Spezifikation: ein optionales Leerzeichen nach "data:" entfernen –
+        // Server senden teils "data:{json}" ohne Leerzeichen.
+        let dataLine = line.replace(/\r$/, '').trim();
+        if (!dataLine.startsWith('data:')) continue;
+        dataLine = dataLine.slice(5);
+        if (dataLine.startsWith(' ')) dataLine = dataLine.slice(1);
+        const data = dataLine.trim();
         if (!data || data === '[DONE]') continue;
         try {
           const json = JSON.parse(data);
