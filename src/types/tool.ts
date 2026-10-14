@@ -75,4 +75,11 @@ export const LEGACY_ID_MAP: Record<string, string> = {
   report: 'generate_report',
   chart: 'chart_spec',
   company: 'company_lookup',
+  // Anbieter-Aliase der News-Kategorie: alle zeigten früher auf dieselbe
+  // DuckDuckGo-Instanz hinter news_search – heute ein Eintrag pro ID, damit
+  // alte Agent-Historie/Tool-Aufrufe weiter funktionieren.
+  webz_news: 'news_search',
+  webz_top_news: 'news_search',
+  gnews_search: 'news_search',
+  gnews_top_headlines: 'news_search',
 };

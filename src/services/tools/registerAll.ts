@@ -182,22 +182,42 @@ toolRegistry.register(
 );
 
 // --- NEWS TOOLS ---
+// GDELT DOC 2.0 API: kostenlose, echte Nachrichtenquelle (Aktualität!), CORS-fähig,
+// ohne API-Key. Die DuckDuckGo-Instant-Answer-API liefert dagegen fast nie
+// tagesaktuelle Newstreffer – allgemeine Themen wie "Deutschland" endeten dort
+// stets in RelatedTopics=[] und damit in Scheinbarren "keine Treffer"-Meldungen.
+// Drosselung: max. 1 Request / 5 s -> Antwort ist text/plain mit JSON oder
+// Rate-Limit-Klartext; beides wird erkannt (JSON-Parse schlägt fehl -> Retry).
+interface GdeltArticle { url?: string; title?: string; domain?: string; seendate?: string; language?: string }
+
+async function searchGdeltNews(query: string, lang: string): Promise<GdeltArticle[]> {
+  // GDELT erwartet Quell-Sprachcodes (german/eng…), unsere Tools bekommen de/en
+  const sourceLang = /^de/i.test(lang) ? 'german' : /^[a-z]{2}$/i.test(lang) ? lang.slice(0, 3) : '';
+  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}` +
+    `&mode=artlist&maxrecords=8${sourceLang ? `&sourcelang=${sourceLang}` : ''}`;
+  const data = await fetchJson<{ articles?: GdeltArticle[] }>(url, { timeout: 20000, retries: 3, label: 'GDELT' });
+  return (Array.isArray(data?.articles) ? data.articles : []).filter(a => a.url && a.title);
+}
+
 toolRegistry.register(
-  def('news_search', 'Nachrichten-Suche', 'Aktuelle Nachrichten suchen', 'news',
+  def('news_search', 'Nachrichten-Suche', 'Aktuelle Nachrichten suchen (GDELT, tagesschnell)', 'news',
     { query: { type: 'string', description: 'Suchbegriff' }, lang: { type: 'string', description: 'Sprache (de, en)' } },
     ['network']),
   async (args) => {
-    const query = args.query as string;
+    const query = String(args.query ?? '').trim();
+    if (!query) return err('Kein Suchbegriff angegeben');
+    const lang = String(args.lang ?? 'de');
     try {
-      const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query + ' news')}&format=json&no_html=1`);
-      const data = await res.json();
-      const results = (data.RelatedTopics || []).slice(0, 5).map((t: Record<string, unknown>) => ({
-        title: (t.Text as string || '').split(' - ')[0],
-        url: (t.FirstURL as string) || '',
-        snippet: (t.Text as string) || '',
-      })).filter((r: { url: string }) => r.url);
-      if (results.length === 0) return emptyErr(`Keine Nachrichtentreffer für "${query}"`);
-      return ok(results);
+      const articles = await searchGdeltNews(query, lang);
+      if (articles.length === 0) return emptyErr(`Keine Nachrichtentreffer für "${query}"`);
+      const results = articles.map(a => ({
+        title: String(a.title ?? '').trim(),
+        url: String(a.url ?? ''),
+        source: a.domain || undefined,
+        snippet: a.seendate ? `Erschienen: ${a.seendate.slice(0, 8)}` : undefined,
+      })).filter(r => r.title && r.url);
+      if (results.length === 0) return emptyErr(`Keine verwertbaren Nachrichtentreffer für "${query}"`);
+      return ok(results, results);
     } catch (e) { return err(`Nachrichten-Fehler: ${(e as Error).message}`); }
   }
 );
@@ -652,51 +672,17 @@ toolRegistry.register(
 );
 
 
-// --- ADDITIONAL NEWS ---
-toolRegistry.register(
-  def('web_search', 'Web-Suche', 'Allgemeine Web-Suche', 'search',
-    { query: { type: 'string', description: 'Suchbegriff' } },
-    ['network']),
-  async (args) => {
-    return toolRegistry.execute('ddg_web_search', args, { origin: 'user', sessionId: '' });
-  }
-);
-
-toolRegistry.register(
-  def('webz_news', 'Webz News', 'Nachrichten über Webz API', 'news',
-    { query: { type: 'string', description: 'Suchbegriff' } },
-    ['network']),
-  async (args) => {
-    return toolRegistry.execute('news_search', args, { origin: 'user', sessionId: '' });
-  }
-);
-
-toolRegistry.register(
-  def('webz_top_news', 'Webz Top-News', 'Top-Nachrichten über Webz', 'news',
-    { query: { type: 'string', description: 'Suchbegriff' } },
-    ['network']),
-  async (args) => {
-    return toolRegistry.execute('news_search', args, { origin: 'user', sessionId: '' });
-  }
-);
-
-toolRegistry.register(
-  def('gnews_search', 'GNews Suche', 'Nachrichten über GNews', 'news',
-    { query: { type: 'string', description: 'Suchbegriff' } },
-    ['network']),
-  async (args) => {
-    return toolRegistry.execute('news_search', args, { origin: 'user', sessionId: '' });
-  }
-);
-
-toolRegistry.register(
-  def('gnews_top_headlines', 'GNews Top-Headlines', 'Top-Schlagzeilen über GNews', 'news',
-    { query: { type: 'string', description: 'Suchbegriff' } },
-    ['network']),
-  async (args) => {
-    return toolRegistry.execute('news_search', args, { origin: 'user', sessionId: '' });
-  }
-);
+// --- ADDITIONAL NEWS / ALIAS-WERKZEUGE ---
+// Frühere Alias-Registrierungen von 'web_search' (als Duplikat mit der ID des
+// optimierten Wikipedia-Tools) sowie webz_*/gnews_* als reine news_search-
+// Durchleister wurden entfernt:
+// - Das web_search-Duplikat überschrieb beim Registrieren das echte
+//   Optimierungs-Tool und degradierte es auf ddg_web_search.
+// - Die Aliase gaben vor, separate Anbieter (Webz/GNews) zu sein, zogen aber
+//   alle dieselbe Quelle nach – vier "verschiedene" Tools meldeten deshalb
+//   parallel ein und denselben "keine Treffer"-Fehler.
+// Stattdessen: echte Legacies für die Anbieter-Namen, damit Agent-Historie mit
+// alten IDs weiterfunktioniert; die Ausführung läuft über das eine news_search.
 
 toolRegistry.register(
   def('stock_analysis', 'Aktien-Analyse', 'Detaillierte Aktien-Analyse', 'finance',
