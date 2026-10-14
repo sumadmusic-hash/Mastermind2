@@ -73,31 +73,22 @@ export function ChatPage() {
     }
   }, [activeSessionId, setSessions, setActiveSession]);
 
-  const handleSend = useCallback(async () => {
-    if (!input.trim() || turnState !== 'idle') return;
+  // Senden nur erlauben, wenn der Agent nichts mehr tut. Blockierend wirken
+  // ausschließlich die aktiven Zustände 'streaming'/'tool_executing'; Abschluss-
+  // zustände wie 'done'/'error' dürfen keine weitere Frage verhindern (siehe
+  // finally-Block in handleSend, der den Zustand nach jedem Turn zurücksetzt).
+  const isBusy = turnState === 'streaming' || turnState === 'tool_executing';
 
-    let sessionId = activeSessionId;
-    if (!sessionId) {
-      const session = await createSession(input.slice(0, 50));
-      setSessions([...sessions, session]);
-      sessionId = session.id;
-      setActiveSession(sessionId);
-    }
+  const handleSend = useCallback(async () => {
+    if (!input.trim() || isBusy) return;
 
     const content = input.trim();
-    const userMsg: ChatMessage = {
-      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-      role: 'user',
-      content,
-      timestamp: Date.now(),
-    };
-    // Sofort als Platzhalter anzeigen (vermeidet Flackern); der Orchestrator
-    // persistiert die Nachricht und erkennt sie ggf. bereits als vorhanden.
-    setMessages(prev => [...prev, userMsg]);
+    // Eingabe sofort leeren und den Turn als aktiv markieren – beides vor dem
+    // ersten await. Sonst kann ein zweiter Klick/Enter während des Wartens auf
+    // die Session-Erzeugung denselben Text doppelt abschicken (Turn war noch
+    // 'idle' und input noch gefüllt). Der Text wird unten ohnehin als
+    // User-Blase angezeigt; bei Fehlern zeigt die Fehlermeldung, was gemeint war.
     setInput('');
-    clearStreamText();
-    clearToolCalls();
-    setError(null);
     setTurnState('streaming');
     respondedRef.current = false;
     streamWasResetRef.current = false;
@@ -105,33 +96,54 @@ export function ChatPage() {
     const abortController = new AbortController();
     abortRef.current = abortController;
 
-    // Die finale Antwort wird persistiert und erscheint damit in `messages`.
-    // Der Stream-Platzhalter MUSS in exakt diesem Moment verschwinden – sonst
-    // ist die KI-Antwort doppelt sichtbar (Stream-Blase + Nachrichtenblase).
-    const finishAssistant = (finalText: string) => {
-      respondedRef.current = true;
-      clearStreamText();
-      setMessages(prev => {
-        // Dedup-Schutz: falls die persistierte Antwort bereits in `messages`
-        // angekommen ist (z.B. durch einen früheren DB-Abgleich), nicht erneut
-        // anhängen – das wäre die "doppelte Antwort".
-        const last = prev[prev.length - 1];
-        if (last && last.role === 'assistant' && last.content === finalText) {
-          return prev;
-        }
-        return [
-          ...prev,
-          {
-            id: uuid(),
-            role: 'assistant' as const,
-            content: finalText,
-            timestamp: Date.now(),
-          },
-        ];
-      });
-    };
-
     try {
+      let sessionId = activeSessionId;
+      if (!sessionId) {
+        const session = await createSession(content.slice(0, 50));
+        setSessions([...sessions, session]);
+        sessionId = session.id;
+        setActiveSession(sessionId);
+      }
+
+      const userMsg: ChatMessage = {
+        id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+        role: 'user',
+        content,
+        timestamp: Date.now(),
+      };
+      // Sofort als Platzhalter anzeigen (vermeidet Flackern); der Orchestrator
+      // persistiert die Nachricht und erkennt sie ggf. bereits als vorhanden.
+      setMessages(prev => [...prev, userMsg]);
+      clearStreamText();
+      clearToolCalls();
+      setError(null);
+
+      // Die finale Antwort wird persistiert und erscheint damit in `messages`.
+      // Der Stream-Platzhalter MUSS in exakt diesem Moment verschwinden – sonst
+      // ist die KI-Antwort doppelt sichtbar (Stream-Blase + Nachrichtenblase).
+      const finishAssistant = (finalText: string) => {
+        respondedRef.current = true;
+        clearStreamText();
+        setMessages(prev => {
+          // Dedup-Schutz: falls die persistierte Antwort bereits in `messages`
+          // angekommen ist (z.B. durch einen früheren DB-Abgleich), nicht erneut
+          // anhängen – das wäre die "doppelte Antwort".
+          const last = prev[prev.length - 1];
+          if (last && last.role === 'assistant' && last.content === finalText) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              id: uuid(),
+              role: 'assistant' as const,
+              content: finalText,
+              timestamp: Date.now(),
+            },
+          ];
+        });
+      };
+
       // sendMessage persistiert die User-Nachricht (Dedup-Schutz vorhanden)
       await sendMessage(sessionId, content, {
         // onStream: Der Orchestrator sendet nach einem `onStreamReset` den
@@ -169,21 +181,38 @@ export function ChatPage() {
         clearStreamText();
       }
     } catch (err) {
+      // Bei Fehlern/Abbruch nichts Verworrenes anzeigen
       setError((err as Error).message);
       setTurnState('error');
-      // Bei Fehlern/Abbruch nichts Verworrenes anzeigen
       clearStreamText();
-    }
+    } finally {
+      // BUGFIX: turnState NUR zurücksetzen, wenn dieser Turn noch der aktive
+      // ist. Vorher fehlte dies komplett: nach dem ersten Turn blieb der
+      // Zustand 'done'/'error' stehen und handleSend blockierte jede weitere
+      // Anfrage ("nur eine Anfrage pro Chat möglich"). Zusätzlich schützt die
+      // Identitätsprüfung (abortRef.current === abortController) davor, dass
+      // ein alter, abgebrochener Turn den Zustand eines neuen Turns überschreibt.
+      if (abortRef.current === abortController) {
+        abortRef.current = null;
+        const st = useChatStore.getState().turnState;
+        // Abgebrochen/Fehler als Info erhalten, sonst zurück auf 'idle', damit
+        // die nächste Frage sofort angenommen wird.
+        setTurnState(st === 'interrupted' || st === 'error' ? st : 'idle');
+      }
 
-    const allSessions = await listSessions();
-    setSessions(allSessions);
-  }, [input, turnState, activeSessionId, sessions, setSessions, setActiveSession,
+      const allSessions = await listSessions();
+      setSessions(allSessions);
+    }
+  }, [input, isBusy, activeSessionId, sessions, setSessions, setActiveSession,
       clearStreamText, clearToolCalls, setError, setTurnState, appendStreamText, setStreamText,
       addToolCall, setToolResult]);
 
   const handleAbort = useCallback(() => {
+    // Nur den aktuell laufenden Turn abbrechen; danach ist wieder 'idle',
+    // damit sofort eine neue Frage gestellt werden kann.
     abortRef.current?.abort();
-    setTurnState('interrupted');
+    abortRef.current = null;
+    setTurnState('idle');
   }, [setTurnState]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -304,9 +333,9 @@ export function ChatPage() {
               placeholder="Nachricht eingeben... (Enter zum Senden)"
               className="flex-1 bg-gray-800 border border-gray-600 rounded-xl px-4 py-3 text-sm resize-none focus:outline-none focus:border-blue-500 placeholder-gray-500"
               rows={2}
-              disabled={turnState === 'streaming' || turnState === 'tool_executing'}
+              disabled={isBusy}
             />
-            {turnState === 'streaming' || turnState === 'tool_executing' ? (
+            {isBusy ? (
               <button onClick={handleAbort} className="px-4 bg-red-600 hover:bg-red-700 rounded-xl transition-colors">
                 <Square size={18} />
               </button>
@@ -322,8 +351,8 @@ export function ChatPage() {
           </div>
           {turnState === 'interrupted' && (
             <div className="text-center mt-2">
-              <button onClick={handleSend} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mx-auto">
-                <RotateCcw size={12} /> Fortsetzen
+              <button onClick={() => setTurnState('idle')} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mx-auto">
+                <RotateCcw size={12} /> Abgebrochen – hier klicken, um eine neue Frage zu stellen
               </button>
             </div>
           )}
