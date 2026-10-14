@@ -15,6 +15,7 @@ interface ChatState {
   setActiveSession: (id: string | null) => void;
   setTurnState: (state: TurnState) => void;
   appendStreamText: (text: string) => void;
+  setStreamText: (text: string) => void;
   clearStreamText: () => void;
   addToolCall: (toolId: string, args: Record<string, unknown>) => void;
   setToolResult: (toolId: string, result: ToolResult) => void;
