@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Square, RotateCcw, Loader2 } from 'lucide-react';
+import { Send, Square, RotateCcw, Loader2, Trash2 } from 'lucide-react';
 import { useChatStore } from '../store/useChatStore';
 import { useAppStore } from '../store/useAppStore';
-import { listSessions, createSession, getSession } from '../services/db/chats';
+import { listSessions, createSession, getSession, deleteSession } from '../services/db/chats';
 import { sendMessage } from '../services/agent/orchestrator';
-import { v4 as uuid } from 'uuid';
 import type { ChatMessage } from '../types/chat';
 
 export function ChatPage() {
@@ -49,6 +48,17 @@ export function ChatPage() {
     setError(null);
   }, [sessions, setSessions, setActiveSession, clearStreamText, clearToolCalls, setError]);
 
+  const handleDeleteChat = useCallback(async (id: string, title: string) => {
+    if (!window.confirm(`Unterhaltung „${title}" wirklich löschen?`)) return;
+    await deleteSession(id);
+    const remaining = await listSessions();
+    setSessions(remaining);
+    if (activeSessionId === id) {
+      setActiveSession(remaining[0]?.id ?? null);
+      setMessages(remaining[0]?.messages ?? []);
+    }
+  }, [activeSessionId, setSessions, setActiveSession]);
+
   const handleSend = useCallback(async () => {
     if (!input.trim() || turnState !== 'idle') return;
 
@@ -60,12 +70,15 @@ export function ChatPage() {
       setActiveSession(sessionId);
     }
 
+    const content = input.trim();
     const userMsg: ChatMessage = {
-      id: uuid(),
+      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
       role: 'user',
-      content: input.trim(),
+      content,
       timestamp: Date.now(),
     };
+    // Sofort als Platzhalter anzeigen (vermeidet Flackern); der Orchestrator
+    // persistiert die Nachricht und erkennt sie ggf. bereits als vorhanden.
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     clearStreamText();
@@ -77,7 +90,8 @@ export function ChatPage() {
     abortRef.current = abortController;
 
     try {
-      await sendMessage(sessionId, input.trim(), {
+      // sendMessage persistiert die User-Nachricht (Dedup-Schutz vorhanden)
+      await sendMessage(sessionId, content, {
         onStream: (text: string) => appendStreamText(text),
         onToolCall: (toolId: string, args: Record<string, unknown>) => addToolCall(toolId, args),
         onToolResult: (result) => setToolResult(result.toolId, result),
@@ -125,15 +139,24 @@ export function ChatPage() {
         </div>
         <div className="space-y-0.5 px-2">
           {sessions.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setActiveSession(s.id)}
-              className={`w-full text-left px-3 py-2 rounded text-xs truncate transition-colors ${
-                s.id === activeSessionId ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700/50'
-              }`}
-            >
-              {s.title}
-            </button>
+            <div key={s.id} className="group relative">
+              <button
+                onClick={() => setActiveSession(s.id)}
+                className={`w-full text-left px-3 py-2 pr-8 rounded text-xs truncate transition-colors ${
+                  s.id === activeSessionId ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700/50'
+                }`}
+              >
+                {s.title}
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDeleteChat(s.id, s.title); }}
+                title="Unterhaltung löschen"
+                aria-label="Unterhaltung löschen"
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded text-gray-500 hover:text-red-400 hover:bg-red-900/30 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
           ))}
         </div>
       </div>

@@ -31,14 +31,19 @@ export async function sendMessage(
   callbacks.onStateChange?.('streaming');
   clearDedupCache();
 
-  // Add user message
-  const userMsg: ChatMessage = {
-    id: uuid(),
-    role: 'user',
-    content: userContent,
-    timestamp: Date.now(),
-  };
-  await addMessage(sessionId, userMsg);
+  // Add user message (avoid duplicates if the caller already persisted it)
+  const existingSession = await getSession(sessionId);
+  const lastMsg = existingSession?.messages[existingSession.messages.length - 1];
+  const alreadyAdded = !!lastMsg && lastMsg.role === 'user' && lastMsg.content === userContent;
+  if (!alreadyAdded) {
+    const userMsg: ChatMessage = {
+      id: uuid(),
+      role: 'user',
+      content: userContent,
+      timestamp: Date.now(),
+    };
+    await addMessage(sessionId, userMsg);
+  }
 
   // Get settings
   const settings = await getSettings();
@@ -102,23 +107,20 @@ export async function sendMessage(
     if (response.toolCalls && response.toolCalls.length > 0) {
       callbacks.onStateChange?.('tool_executing');
 
-      // Add assistant message with tool calls
-      const assistantMsg: ChatMessage = {
-        id: uuid(),
-        role: 'assistant',
-        content: response.content || '',
-        toolCalls: response.toolCalls.map(tc => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments,
-        })),
-        timestamp: Date.now(),
-      };
-      await addMessage(sessionId, assistantMsg);
+      // Execute each tool call FIRST, so assistant message + tool results can be
+      // persisted atomically in the correct order. If this turn is interrupted
+      // afterwards, the history never contains an assistant message with
+      // tool_calls whose tool responses are missing (which causes HTTP 400 on
+      // the next request: "for 'role:assistant' ... 'tool_calls.0.type' is missing" /
+      // dangling tool_call_id references).
+      const normalizedToolCalls = response.toolCalls.map((tc, i) => ({
+        id: tc.id || `call_${uuid()}`,
+        name: tc.name,
+        arguments: tc.arguments,
+      }));
 
-      // Execute each tool call
       const toolResults: ToolResult[] = [];
-      for (const tc of response.toolCalls) {
+      for (const tc of normalizedToolCalls) {
         let args: Record<string, unknown>;
         try {
           args = JSON.parse(tc.arguments);
@@ -137,15 +139,34 @@ export async function sendMessage(
         callbacks.onToolResult?.(result);
       }
 
-      // Add tool results to messages
+      // Add assistant message with tool calls (OpenAI-kompatibel mit type: 'function')
+      const assistantMsg: ChatMessage = {
+        id: uuid(),
+        role: 'assistant',
+        content: response.content || '',
+        toolCalls: normalizedToolCalls.map(tc => ({
+          id: tc.id,
+          type: 'function',
+          name: tc.name,
+          arguments: tc.arguments,
+        })),
+        timestamp: Date.now(),
+      };
+      await addMessage(sessionId, assistantMsg);
+
+      // Add tool results to messages (callId from the request, not the result –
+      // dedup-cached results may carry an empty callId and would break tool_call_id refs)
       const toolMsg: ChatMessage = {
         id: uuid(),
         role: 'tool',
         content: '',
-        toolResults: toolResults.map(r => ({
-          callId: r.callId,
-          toolId: r.toolId,
-          content: r.success ? JSON.stringify(r.data) : `Error: ${r.error}`,
+        toolResults: normalizedToolCalls.map((tc, i) => ({
+          callId: tc.id,
+          toolId: tc.name,
+          content: (() => {
+            const r = toolResults[i];
+            return r && r.success ? JSON.stringify(r.data) : `Error: ${r?.error ?? 'Tool-Ergebnis fehlt'}`;
+          })(),
         })),
         timestamp: Date.now(),
       };
