@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const ToolCategory = z.enum([
-  'search', 'news', 'finance', 'data', 'knowledge', 'memory', 'automation'
+  'search', 'news', 'finance', 'data', 'knowledge', 'memory', 'automation', 'calendar'
 ]);
 export type ToolCategory = z.infer<typeof ToolCategory>;
 

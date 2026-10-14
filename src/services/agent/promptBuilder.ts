@@ -13,7 +13,11 @@ Regeln:
 - Bei Unsicherheit: sage es ehrlich.`;
 
 export function buildSystemPrompt(): string {
-  return SYSTEM_PROMPT;
+  // Heutiges Datum ins Prompt-Innere: nur so kann der Agent relative Angaben
+  // ("morgen", "nächste Woche") für calendar_create in ein konkretes
+  // YYYY-MM-DD-Datum übersetzen.
+  const today = new Date().toISOString().slice(0, 10);
+  return `${SYSTEM_PROMPT}\n\nHeute ist ${today} (YYYY-MM-DD). Nutze dieses Datum, um bei Terminen (calendar_create) relative Zeitangaben in konkrete Datumsangaben umzurechnen.`;
 }
 
 export function buildProviderMessages(

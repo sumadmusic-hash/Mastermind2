@@ -73,6 +73,21 @@ export interface InterruptedTurnEntry {
   timestamp: number;
 }
 
+export interface CalendarEvent {
+  id?: number;
+  title: string;
+  /** ISO-Datum (YYYY-MM-DD) des Termins */
+  date: string;
+  /** Startzeit als HH:MM (24h, lokale Zeit des Nutzers) */
+  time: string;
+  /** Dauer in Minuten */
+  durationMin: number;
+  description?: string;
+  location?: string;
+  participants?: string;
+  createdAt: number;
+}
+
 export class AppDatabase extends Dexie {
   chatSessions!: Table<ChatSession, string>;
   settings!: Table<AppSettings, string>;
@@ -85,6 +100,7 @@ export class AppDatabase extends Dexie {
   scheduledJobs!: Table<ScheduledJob, number>;
   scheduledRuns!: Table<ScheduledRun, number>;
   interruptedTurns!: Table<InterruptedTurnEntry, number>;
+  calendarEvents!: Table<CalendarEvent, number>;
 
   constructor() {
     super('AIResearchAssistant');
@@ -100,6 +116,10 @@ export class AppDatabase extends Dexie {
       scheduledJobs: '++id, enabled, nextRun',
       scheduledRuns: '++id, jobId, startedAt',
       interruptedTurns: '++id, sessionId, timestamp',
+    });
+    // Version 2: lokaler Kalender (Termine) für calendar_*-Tools
+    this.version(2).stores({
+      calendarEvents: '++id, date, title, createdAt',
     });
   }
 }
