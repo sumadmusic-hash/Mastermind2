@@ -107,15 +107,19 @@ export function SettingsPage() {
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>
-              <select
+              <input
+                type="text"
+                list={`model-catalog-${i}`}
                 value={slot.modelId}
                 onChange={e => handleSlotChange(i, 'modelId', e.target.value)}
+                placeholder="Modell-ID eingeben..."
                 className="flex-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500"
-              >
+              />
+              <datalist id={`model-catalog-${i}`}>
                 {(MODEL_CATALOG[slot.providerId as ProviderId] || []).map(m => (
-                  <option key={m.id} value={m.id}>{m.name} ({m.id})</option>
+                  <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
-              </select>
+              </datalist>
               {slot.isPrimary && <span className="text-xs bg-blue-600/30 text-blue-400 px-2 py-0.5 rounded">Primär</span>}
             </div>
           ))}
