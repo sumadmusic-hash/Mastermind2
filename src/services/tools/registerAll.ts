@@ -1,5 +1,6 @@
 import type { ToolDefinition, ToolResult, ToolExecutionContext } from '../../types/tool';
 import { toolRegistry } from './registry';
+import { evaluateExpression } from '../shared/safeMath';
 
 // Helper to create a tool definition
 function def(
@@ -191,14 +192,14 @@ toolRegistry.register(
 
 // --- DATA TOOLS ---
 toolRegistry.register(
-  def('calculator', 'Rechner', 'Mathematische Berechnungen', 'data',
-    { expression: { type: 'string', description: 'Mathematischer Ausdruck (z.B. 2+2, sqrt(16))' } }),
+  def('calculator', 'Rechner', 'Mathematische Berechnungen (Ausdruck mit + - * / % ^, Klammern, Funktionen wie sqrt(16), deutsche Komma-Zahlen erlaubt)', 'data',
+    { expression: { type: 'string', description: 'Mathematischer Ausdruck (z.B. 2+2, sqrt(16), 1.234,5*2)' } }),
   async (args) => {
     const expr = args.expression as string;
     try {
-      // Safe math evaluation (no eval!)
-      const sanitized = expr.replace(/[^0-9+\-*/().,%^ ]/g, '');
-      const result = new Function(`return (${sanitized})`)();
+      // Sicherer Recursive-Descent-Parser: kein eval / new Function,
+      // Codeausführung ist strukturell unmöglich.
+      const result = evaluateExpression(expr);
       return ok({ expression: expr, result });
     } catch (e) { return err(`Berechnungsfehler: ${(e as Error).message}`); }
   }

@@ -30,7 +30,9 @@ export const ProviderMessageSchema = z.object({
 export type ProviderMessage = z.infer<typeof ProviderMessageSchema>;
 
 export const StreamChunkSchema = z.object({
-  type: z.enum(['text', 'tool_call', 'done', 'error']),
+  // 'reset' signalisiert dem Consumer, dass die Streaming-Anzeige verworfen
+  // werden muss (z.B. vor dem ersten Text-Delta eines Fallback-Versuchs).
+  type: z.enum(['text', 'tool_call', 'done', 'error', 'reset']),
   content: z.string().optional(),
   toolCall: z.any().optional(),
   error: z.string().optional(),

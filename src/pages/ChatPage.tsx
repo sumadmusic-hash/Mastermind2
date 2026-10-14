@@ -11,7 +11,7 @@ export function ChatPage() {
   const { settings, loaded } = useAppStore();
   const {
     sessions, setSessions, activeSessionId, setActiveSession,
-    turnState, setTurnState, streamingText, appendStreamText, clearStreamText,
+    turnState, setTurnState, streamingText, appendStreamText, setStreamText, clearStreamText,
     toolCalls, addToolCall, setToolResult, clearToolCalls, error, setError
   } = useChatStore();
 
@@ -19,6 +19,11 @@ export function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // True, solange die finale KI-Antwort noch nicht in `messages` gelandet ist.
   const respondedRef = useRef(false);
+  // Merkt, ob der Orchestrator gerade die Streaming-Anzeige zurückgesetzt hat.
+  // Das nächste onStream-Event enthält dann den KUMULIERTEN Text des aktuellen
+  // Provider-Versuchs und muss ersetzt statt angehängt werden (sonst doppelte
+  // Antwort bei Failover).
+  const streamWasResetRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -95,6 +100,7 @@ export function ChatPage() {
     setError(null);
     setTurnState('streaming');
     respondedRef.current = false;
+    streamWasResetRef.current = false;
 
     const abortController = new AbortController();
     abortRef.current = abortController;
@@ -128,10 +134,25 @@ export function ChatPage() {
     try {
       // sendMessage persistiert die User-Nachricht (Dedup-Schutz vorhanden)
       await sendMessage(sessionId, content, {
-        onStream: (text: string) => appendStreamText(text),
+        // onStream: Der Orchestrator sendet nach einem `onStreamReset` den
+        // kumulierten Text des aktuellen Versuchs -> mit setStreamText ERSETZEN
+        // (nicht anhängen), sonst wäre der Text doppelt sichtbar.
+        // Ohne Reset werden echte Delta-Chunks übergeben -> appendStreamText.
+        onStream: (text: string) => {
+          if (streamWasResetRef.current) {
+            streamWasResetRef.current = false;
+            setStreamText(text);
+          } else {
+            appendStreamText(text);
+          }
+        },
+        onStreamReset: () => {
+          streamWasResetRef.current = true;
+          clearStreamText();
+        },
         onFinish: finishAssistant,
-        onToolCall: (toolId: string, args: Record<string, unknown>) => addToolCall(toolId, args),
-        onToolResult: (result) => setToolResult(result.toolId, result),
+        onToolCall: (toolId: string, args: Record<string, unknown>, callId: string) => addToolCall(toolId, args, callId),
+        onToolResult: (result) => setToolResult(result),
         onStateChange: (state) => setTurnState(state),
         onError: (err: Error) => setError(err.message),
       }, abortController.signal);
@@ -157,7 +178,8 @@ export function ChatPage() {
     const allSessions = await listSessions();
     setSessions(allSessions);
   }, [input, turnState, activeSessionId, sessions, setSessions, setActiveSession,
-      clearStreamText, clearToolCalls, setError, setTurnState, appendStreamText, addToolCall, setToolResult]);
+      clearStreamText, clearToolCalls, setError, setTurnState, appendStreamText, setStreamText,
+      addToolCall, setToolResult]);
 
   const handleAbort = useCallback(() => {
     abortRef.current?.abort();
