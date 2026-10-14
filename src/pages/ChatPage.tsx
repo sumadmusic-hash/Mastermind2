@@ -5,6 +5,7 @@ import { useAppStore } from '../store/useAppStore';
 import { listSessions, createSession, getSession, deleteSession } from '../services/db/chats';
 import { sendMessage } from '../services/agent/orchestrator';
 import type { ChatMessage } from '../types/chat';
+import { v4 as uuid } from 'uuid';
 
 export function ChatPage() {
   const { settings, loaded } = useAppStore();
@@ -16,6 +17,8 @@ export function ChatPage() {
 
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // True, solange die finale KI-Antwort noch nicht in `messages` gelandet ist.
+  const respondedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -33,7 +36,13 @@ export function ChatPage() {
     } else {
       setMessages([]);
     }
-  }, [activeSessionId]);
+    // Session-Wechsel: Streaming-Anzeige zurücksetzen
+    clearStreamText();
+    clearToolCalls();
+    setError(null);
+    setTurnState('idle');
+    respondedRef.current = false;
+  }, [activeSessionId, clearStreamText, clearToolCalls, setError, setTurnState]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -85,25 +94,64 @@ export function ChatPage() {
     clearToolCalls();
     setError(null);
     setTurnState('streaming');
+    respondedRef.current = false;
 
     const abortController = new AbortController();
     abortRef.current = abortController;
+
+    // Die finale Antwort wird persistiert und erscheint damit in `messages`.
+    // Der Stream-Platzhalter MUSS in exakt diesem Moment verschwinden – sonst
+    // ist die KI-Antwort doppelt sichtbar (Stream-Blase + Nachrichtenblase).
+    const finishAssistant = (finalText: string) => {
+      respondedRef.current = true;
+      clearStreamText();
+      setMessages(prev => {
+        // Dedup-Schutz: falls die persistierte Antwort bereits in `messages`
+        // angekommen ist (z.B. durch einen früheren DB-Abgleich), nicht erneut
+        // anhängen – das wäre die "doppelte Antwort".
+        const last = prev[prev.length - 1];
+        if (last && last.role === 'assistant' && last.content === finalText) {
+          return prev;
+        }
+        return [
+          ...prev,
+          {
+            id: uuid(),
+            role: 'assistant' as const,
+            content: finalText,
+            timestamp: Date.now(),
+          },
+        ];
+      });
+    };
 
     try {
       // sendMessage persistiert die User-Nachricht (Dedup-Schutz vorhanden)
       await sendMessage(sessionId, content, {
         onStream: (text: string) => appendStreamText(text),
+        onFinish: finishAssistant,
         onToolCall: (toolId: string, args: Record<string, unknown>) => addToolCall(toolId, args),
         onToolResult: (result) => setToolResult(result.toolId, result),
         onStateChange: (state) => setTurnState(state),
         onError: (err: Error) => setError(err.message),
       }, abortController.signal);
 
+      // DB-Stand abgleichen (enthält die bereits persistierte Antwort).
+      // Falls `onFinish` nicht ausgelöst wurde (z.B. Abbruch/Fehler), den
+      // verworfenen Stream verwerfen; andernfalls nichts überschreiben, um
+      // kein Flackern zu erzeugen.
       const updated = await getSession(sessionId);
-      if (updated) setMessages(updated.messages);
+      if (respondedRef.current) {
+        clearStreamText();
+      } else if (updated) {
+        setMessages(updated.messages);
+        clearStreamText();
+      }
     } catch (err) {
       setError((err as Error).message);
       setTurnState('error');
+      // Bei Fehlern/Abbruch nichts Verworrenes anzeigen
+      clearStreamText();
     }
 
     const allSessions = await listSessions();
@@ -182,7 +230,10 @@ export function ChatPage() {
             <MessageBubble key={msg.id} message={msg} />
           ))}
 
-          {streamingText && (
+          {/* Stream-Platzhalter nur zeigen, solange die Antwort noch nicht als
+              persistierte Nachricht in `messages` angekommen ist. Sonst wäre die
+              KI-Antwort doppelt sichtbar (Stream-Blase + Nachrichtenblase). */}
+          {streamingText && turnState !== 'done' && (
             <div className="flex gap-3">
               <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-xs font-bold shrink-0">AI</div>
               <div className="bg-gray-800 rounded-xl px-4 py-3 max-w-2xl">

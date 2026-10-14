@@ -16,6 +16,11 @@ const CONTEXT_BUDGET_TOKENS = 24000;
 
 export interface AgentCallbacks {
   onStream?: (text: string) => void;
+  // Wird einmalig mit dem finalen Antworttext aufgerufen, BEVOR dieser
+  // persistiert und `onStateChange('done')` ausgelöst wird. So kann der UI-
+  // Layer die fertige Antwort übernehmen, ohne dass Stream-Platzhalter und
+  // persistierte Nachricht gleichzeitig sichtbar sind ("Antwort doppelt").
+  onFinish?: (finalText: string) => void;
   onToolCall?: (toolId: string, args: Record<string, unknown>) => void;
   onToolResult?: (result: ToolResult) => void;
   onStateChange?: (state: TurnState) => void;
@@ -188,6 +193,8 @@ export async function sendMessage(
 
     // No tool calls - final response
     if (response.content) {
+      callbacks.onFinish?.(response.content);
+
       const assistantMsg: ChatMessage = {
         id: uuid(),
         role: 'assistant',
