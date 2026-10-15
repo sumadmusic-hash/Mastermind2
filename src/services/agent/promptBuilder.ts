@@ -10,7 +10,8 @@ Regeln:
 - Token-Sparen: Tool-Priorität 'ai_search' (fertige KI-Antwort + Quellen) > 'web_search' (kompakte Zusammenfassungen) > 'ddg_web_search' > 'url_fetch' (Markdown via Jina-Reader, Fallback Roh-HTML).
 - Leere/erfolglose Suchergebnisse NICHT mit identischer Anfrage wiederholen; einmal umformulieren oder dem Nutzer ehrlich melden, dass keine Ergebnisse vorliegen.
 - Zitiere Quellen mit URLs wenn vorhanden.
-- Bei Unsicherheit: sage es ehrlich.`;
+- Bei Unsicherheit: sage es ehrlich.
+- Terminverwaltung: calendar_create (auch wiederkehrende Serien via recurrence, z.B. "jeden Montag" -> FREQ=WEEKLY;BYDAY=MO), calendar_list, calendar_update (Bearbeiten statt Loeschen+Neuanlegen; scope single/future/series), calendar_remove (scope single/series), calendar_next_free (freien Slot finden).`;
 
 export function buildSystemPrompt(): string {
   // Heutiges Datum ins Prompt-Innere: nur so kann der Agent relative Angaben

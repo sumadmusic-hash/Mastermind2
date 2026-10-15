@@ -3,6 +3,9 @@ import type { ToolDefinition } from '../../types/tool';
 // Core tools always included regardless of relevance
 const CORE_TOOL_IDS = ['ddg_web_search', 'url_fetch'];
 
+// Alle Kalender-/Terminverwaltungswerkzeuge (create/list/update/remove/next_free)
+const ALL_CALENDAR_TOOLS = ['calendar_create', 'calendar_list', 'calendar_update', 'calendar_remove', 'calendar_next_free'];
+
 // Keywords mapped to tool categories
 const KEYWORD_MAP: Record<string, string[]> = {
   search: ['ddg_web_search', 'web_search'],
@@ -43,11 +46,15 @@ const KEYWORD_MAP: Record<string, string[]> = {
   erinnerung: ['memory_save', 'memory_recall', 'memory_forget'],
   memory: ['memory_save', 'memory_recall', 'memory_forget'],
   merken: ['memory_save'],
-  termin: ['calendar_create', 'calendar_list', 'calendar_remove'],
-  termine: ['calendar_create', 'calendar_list', 'calendar_remove'],
-  kalender: ['calendar_create', 'calendar_list', 'calendar_remove'],
-  appointment: ['calendar_create', 'calendar_list', 'calendar_remove'],
-  meeting: ['calendar_create', 'calendar_list', 'calendar_remove'],
+  termin: ALL_CALENDAR_TOOLS,
+  termine: ALL_CALENDAR_TOOLS,
+  kalender: ALL_CALENDAR_TOOLS,
+  appointment: ALL_CALENDAR_TOOLS,
+  meeting: ALL_CALENDAR_TOOLS,
+  wiederhol: ALL_CALENDAR_TOOLS, // wiederkehrend/wiederholung (Stamm ohne Ende)
+  serien: ALL_CALENDAR_TOOLS,
+  frei: ALL_CALENDAR_TOOLS,
+  free: ALL_CALENDAR_TOOLS,
   plan: ['schedule_create', 'schedule_list', 'schedule_remove'],
   schedule: ['schedule_create', 'schedule_list', 'schedule_remove'],
   export: ['export_file'],
