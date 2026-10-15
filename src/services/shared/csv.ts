@@ -45,10 +45,11 @@ export function parseCSV(csv: string): Record<string, string>[] {
   while (i < csv.length) {
     const ch = csv[i];
     if (ch === '\n' || ch === '\r') {
-      // RFC 4180: ein Zeilenende BEI Feldstart beendet die Zeile, OHNE eine
-      // weitere Spalte anzuhängen. Das verhindert die Geister-Spalte '' bei
-      // CRLF-Dateien, wo das '\r' sonst als separates leeres Feld zählte.
-      if (!atFieldStart) current.push(''); // echtes leeres Schlussfeld ('a,')
+      // RFC 4180: ein Zeilenende beendet die aktuelle Zeile. Es wird KEIN
+      // zusätzliches Feld angehängt – ein echtes leeres Schlussfeld ("a,")
+      // wurde bereits beim Komma als '' gepusht. Ein bedingungsloser Push
+      // hier erzeugte dagegen bei jeder Zeile eine Geister-Spalte ""
+      // (z. B. {a:"1", b:"2", "":""} statt {a:"1", b:"2"}).
       rows.push(current);
       current = [];
       atFieldStart = true;
@@ -58,16 +59,17 @@ export function parseCSV(csv: string): Record<string, string>[] {
     }
     if (ch === ',') {
       // Trennzeichen: das FELD DAVOR wurde bereits von parseField gelesen und
-      // gepusht – der Komma-Zweig pusht nichts Eigenes. atFieldStart bleibt/
-      // wird auf false gesetzt, damit ein ECHTES leeres Schlussfeld ("a,")
-      // beim folgenden Zeilenende als '' gezählt wird. Ein '\r'\n bei
-      // Feldstart (direkt nach Separador) würde andernfalls Geister-Spalten
-      // erzeugen – verhindert das die !atFieldStart-Bedingung nicht? Doch:
-      // nach '\n'/'\r' bei atFieldStart==true wird nichts gepusht, und nach
-      // einem Komma ist das Folgezeichen entweder ein Feldstart (wird von
-      // parseField gelesen) oder das Zeilenende selbst – Letzteres zählt nur
-      // dann als leeres Feld, wenn direkt zuvor ein Komma stand... Genau das
-      // ist RFC-4180-Konvention: "a," hat ein leeres zweites Feld, "a" nicht.
+      // gepusht. Ein echtes leeres Feld liegt nur vor, wenn direkt HINTER
+      // diesem Komma ein weiteres Separador/Zeilenende folgt ("a,,b" oder
+      // "a,\n"). Das wird hier schon erkannt und als '' gepusht, damit das
+      // folgende Separador nicht erneut ein Feld anlegt (sonst entstünde eine
+      // Geister-Spalte).
+      let j = i + 1;
+      if (j < csv.length && csv[j] === '\r' && csv[j + 1] === '\n') j++; // CRLF als EIN Zeilenende
+      const nextCh = j < csv.length ? csv[j] : undefined;
+      if (nextCh === ',' || nextCh === '\n' || nextCh === '\r' || nextCh === undefined) {
+        current.push('');
+      }
       atFieldStart = false;
       i++;
       continue;
