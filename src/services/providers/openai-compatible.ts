@@ -2,11 +2,24 @@ import type { ProviderAdapter, ProviderCallConfig, ProviderResponse, ProviderToo
 import { AuthProviderError, RateLimitError, EmptyResponseError, ProviderError } from './types';
 import type { ProviderMessage, StreamChunk } from '../../types/provider';
 import type { ToolDefinition } from '../../types/tool';
+import { isLocalProvider, LOCAL_PLACEHOLDER_KEY } from './registry';
+
+// Vorlage für die Fehlermeldung, wenn ein lokaler Server nicht erreichbar ist.
+// Wird vom UI (Settings/Chat) auch für Hinweistexte verwendet.
+export const LOCAL_UNREACHABLE_HINT =
+  'Lokaler Server nicht erreichbar. Läuft er? LM Studio: "Developer"-Tab -> Server auf Port 1234 starten und CORS aktivieren; Ollama: "ollama serve" (Port 11434).';
+
+function isLocalBaseUrl(baseUrl: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(baseUrl || '');
+}
 
 function resolveUrl(config: ProviderCallConfig, path: string, proxyBaseUrl?: string): string {
   const base = config.baseUrl || '';
   const targetUrl = `${base}${path}`;
-  if (proxyBaseUrl) {
+  // Lokale Server (LM Studio/Ollama) laufen auf localhost und sind direkt
+  // erreichbar. Ein externer CORS-Proxy würde die Anfrage umleiten und der
+  // lokale Endpunkt wäre unerreichbar – daher für localhost-URLs nie proxyen.
+  if (proxyBaseUrl && !isLocalBaseUrl(base)) {
     // CORS-Proxy: erwartet die Ziel-URL als Query-Parameter, z.B. https://proxy.example/?url=
     const sep = proxyBaseUrl.includes('?') ? '&' : '?';
     return `${proxyBaseUrl}${sep}url=${encodeURIComponent(targetUrl)}`;
@@ -78,7 +91,9 @@ export async function streamOpenAICompatible(
     });
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err;
-    throw new ProviderError(`Netzwerkfehler: ${(err as Error).message}`, providerId, undefined, true);
+    const isLocal = isLocalProvider(providerId) || isLocalBaseUrl(url);
+    const hint = isLocal ? ` ${LOCAL_UNREACHABLE_HINT}` : '';
+    throw new ProviderError(`Netzwerkfehler: ${(err as Error).message}.${hint}`, providerId, undefined, true);
   }
 
   if (response.status === 401 || response.status === 403) {
@@ -191,20 +206,69 @@ async function parseSSEStream(
 }
 
 export function createOpenAICompatibleAdapter(providerId: string): ProviderAdapter {
+  const local = isLocalProvider(providerId);
+
+  // Modelle eines lokalen Servers auflisten (GET /models). LM Studio und Ollama
+  // liefern das OpenAI-kompatible Format { data: [{ id }] } bzw. { models: [...] }.
+  async function fetchModelIds(baseUrl: string, apiKey: string): Promise<string[]> {
+    try {
+      const res = await fetch(`${baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) return [];
+      const json = await res.json();
+      const list: unknown[] = Array.isArray(json?.data) ? json.data
+        : Array.isArray(json?.models) ? json.models : [];
+      return list
+        .map((m) => {
+          const id = (m as { id?: string; name?: string })?.id ?? (m as { name?: string })?.name;
+          return typeof id === 'string' ? id : '';
+        })
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
   return {
     id: providerId,
     async call(config, messages, tools, onChunk, abortSignal) {
-      return streamOpenAICompatible(providerId, config, messages, tools, onChunk, abortSignal);
+      // Lokale Server brauchen keinen Key – Placeholder senden, damit Endpunkte
+      // mit obligater Authorization-Zeile nicht mit 401 antworten.
+      const effectiveConfig = local && !(config.apiKey || '').trim()
+        ? { ...config, apiKey: LOCAL_PLACEHOLDER_KEY }
+        : config;
+      return streamOpenAICompatible(providerId, effectiveConfig, messages, tools, onChunk, abortSignal);
     },
     async testConnection(apiKey, baseUrl) {
+      // Bei lokalen Providern ist die Base-URL das entscheidende Kriterium
+      // (API-Key wird ignoriert) – sonst schlägt der Test wegen des leeren
+      // Key-Feldes scheinbar fehl, obwohl der Server läuft.
+      const probeUrl = local ? '' : (apiKey || '').trim();
       try {
         const res = await fetch(`${baseUrl || ''}/models`, {
-          headers: { Authorization: `Bearer ${(apiKey || '').trim()}` },
+          headers: { Authorization: `Bearer ${probeUrl || LOCAL_PLACEHOLDER_KEY}` },
         });
         if (!res.ok) {
           console.warn(`Verbindungstest ${providerId}: HTTP ${res.status}`, await res.text().catch(() => ''));
+          return false;
         }
-        return res.ok;
+        if (local) {
+          // 200 allein reicht nicht als Beweis, dass ein lokales Modell
+          // erreichbar ist: ohne geladene Models liefert LM Studio eine leere
+          // Liste. Zusätzlich die Modell-IDs in die Konsole loggen, damit die
+          // exakte Modell-ID in den Einstellungen kopierbar ist.
+          const ids = await fetchModelIds(baseUrl || '', probeUrl || LOCAL_PLACEHOLDER_KEY);
+          if (ids.length > 0) {
+            console.info(`[LM Studio/Ollama] Gefundene lokale Modelle (${providerId}):`, ids);
+          } else {
+            console.warn(
+              `[${providerId}] Server erreichbar, aber keine Modelle gemeldet. ` +
+              `Bei LM Studio: unter "Developer Server" ein Modell laden und "Serve on localhost" aktivieren.`
+            );
+          }
+        }
+        return true;
       } catch (err) {
         console.warn(`Verbindungstest ${providerId}: Netzwerk-/CORS-Fehler`, err);
         return false;

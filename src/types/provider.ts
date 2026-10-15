@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const ProviderId = z.enum(['groq', 'openrouter', 'gemini', 'lmstudio']);
+export const ProviderId = z.enum(['groq', 'openrouter', 'gemini', 'lmstudio', 'ollama']);
 export type ProviderId = z.infer<typeof ProviderId>;
 
 export const ProviderConfigSchema = z.object({
@@ -57,6 +57,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     openrouter: { id: 'openrouter', apiKey: '', enabled: false },
     gemini: { id: 'gemini', apiKey: '', enabled: false },
     lmstudio: { id: 'lmstudio', apiKey: '', baseUrl: 'http://localhost:1234/v1', enabled: false },
+    ollama: { id: 'ollama', apiKey: '', baseUrl: 'http://localhost:11434/v1', enabled: false },
   },
   modelSlots: [
     { slot: 0, label: 'Primär', providerId: 'groq', modelId: 'llama-3.3-70b-versatile', isPrimary: true },

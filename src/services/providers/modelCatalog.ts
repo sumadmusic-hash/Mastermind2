@@ -28,6 +28,12 @@ export const MODEL_CATALOG: Record<ProviderId, ModelInfo[]> = {
   lmstudio: [
     { id: 'local-model', name: 'Lokales Modell', contextWindow: 8192, provider: 'lmstudio' },
   ],
+  ollama: [
+    { id: 'llama3.1', name: 'Llama 3.1 (Ollama)', contextWindow: 8192, provider: 'ollama' },
+    { id: 'qwen2.5-coder:7b', name: 'Qwen 2.5 Coder 7B', contextWindow: 32768, provider: 'ollama' },
+    { id: 'mistral', name: 'Mistral', contextWindow: 8192, provider: 'ollama' },
+    { id: 'gemma2', name: 'Gemma 2', contextWindow: 8192, provider: 'ollama' },
+  ],
 };
 
 // Maps deprecated model IDs to their successors
