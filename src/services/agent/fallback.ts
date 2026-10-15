@@ -1,7 +1,7 @@
 import type { ProviderAdapter, ProviderResponse, ProviderCallConfig } from '../providers/types';
 import type { ProviderMessage, ModelSlot, StreamChunk } from '../../types/provider';
 import type { ToolDefinition } from '../../types/tool';
-import { getAdapter, resolveEndpoint } from '../providers/registry';
+import { getAdapter, resolveEndpoint, isLocalProvider } from '../providers/registry';
 import { detectRefusal } from '../providers/refusal';
 import { resolveModelId } from '../providers/modelCatalog';
 import { ContentRefusalError, isAuthError, isRateLimitError, ProviderError } from '../providers/types';
@@ -39,7 +39,10 @@ export async function callWithFailover(
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
     const apiKey = apiKeys[slot.providerId];
-    if (!apiKey && slot.providerId !== 'lmstudio') continue;
+    // Lokale Server (LM Studio/Ollama) laufen ohne API-Key – für sie gilt ein
+    // Platzhalter-Key als "vorhanden", damit Failover ohne Key funktioniert.
+    const hasUsableKey = !!apiKey || isLocalProvider(slot.providerId);
+    if (!hasUsableKey) continue;
 
     // TPM-Limit auswerten: Wenn das Minutenbudget erschöpft ist, nicht weitere
     // Provider anfragen (würde nur 429 produzieren), sondern klar abbrechen.

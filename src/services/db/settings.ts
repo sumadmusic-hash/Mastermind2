@@ -4,7 +4,13 @@ import { DEFAULT_SETTINGS } from '../../types/provider';
 
 export async function getSettings(): Promise<AppSettings> {
   const settings = await db.settings.get('main');
-  return settings || { ...DEFAULT_SETTINGS };
+  if (!settings) return { ...DEFAULT_SETTINGS };
+  // Migration: Ältere gespeicherte Einstellungen kennen nachträglich
+  // hinzugekommene Provider (z.B. "ollama") noch nicht. Fehlende Einträge
+  // aus den Defaults ergänzen, damit UI und Failover sie nutzen können.
+  const merged = { ...settings };
+  merged.providers = { ...DEFAULT_SETTINGS.providers, ...(settings.providers || {}) };
+  return merged;
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {

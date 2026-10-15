@@ -5,6 +5,7 @@ import { buildSystemPrompt, buildProviderMessages } from './promptBuilder';
 import { truncateHistory } from './contextManager';
 import { dispatchToolCall, clearDedupCache } from './toolDispatcher';
 import { callWithFailover } from './fallback';
+import { isLocalProvider } from '../providers/registry';
 import { selectRelevantTools } from '../tools/relevance';
 import { toolRegistry } from '../tools/registry';
 import { addMessage, getSession } from '../db/chats';
@@ -59,7 +60,9 @@ export async function sendMessage(
 
   // Get settings
   const settings = await getSettings();
-  const slots = settings.modelSlots.filter(s => settings.providers[s.providerId]?.enabled || s.providerId === 'lmstudio');
+  const slots = settings.modelSlots.filter(
+    s => settings.providers[s.providerId]?.enabled || isLocalProvider(s.providerId)
+  );
   if (slots.length === 0) {
     throw new Error('Kein Modell-Slot aktiv. Bitte in den Einstellungen mindestens einen Provider aktivieren und einen API-Key hinterlegen.');
   }

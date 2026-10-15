@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { getAdapter, resolveEndpoint } from '../services/providers/registry';
+import { getAdapter, resolveEndpoint, isLocalProvider } from '../services/providers/registry';
+import { LOCAL_UNREACHABLE_HINT } from '../services/providers/openai-compatible';
 import { MODEL_CATALOG } from '../services/providers/modelCatalog';
 import { CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import type { ProviderId, ModelSlot } from '../types/provider';
@@ -51,7 +52,8 @@ export function SettingsPage() {
     { id: 'groq', name: 'Groq', description: 'Schnelle Inferenz mit Llama-Modellen' },
     { id: 'openrouter', name: 'OpenRouter', description: 'Multi-Provider Gateway' },
     { id: 'gemini', name: 'Google Gemini', description: 'Gemini-Modelle von Google' },
-    { id: 'lmstudio', name: 'LM Studio', description: 'Lokale Modelle (localhost)' },
+    { id: 'lmstudio', name: 'LM Studio', description: 'Lokale Modelle (localhost:1234, kein API-Key nötig)' },
+    { id: 'ollama', name: 'Ollama', description: 'Lokale Modelle (localhost:11434/v1, kein API-Key nötig)' },
   ];
 
   return (
