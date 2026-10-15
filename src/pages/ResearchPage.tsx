@@ -4,7 +4,7 @@ import { toolRegistry } from '../services/tools/registry';
 import '../services/tools/registerAll';
 
 const QUICK_ACTIONS = [
-  { id: 'news', label: 'Nachrichten', icon: Globe, toolId: 'news_search', param: { query: 'Aktuelle Nachrichten' } },
+  { id: 'news', label: 'Nachrichten', icon: Globe, toolId: 'ai_search', param: { query: 'Aktuelle Nachrichten' } },
   { id: 'stock', label: 'Aktienkurs', icon: TrendingUp, toolId: 'stock_price', param: { ticker: 'SAP.DE' } },
   { id: 'company', label: 'Unternehmen', icon: Building2, toolId: 'company_lookup', param: { company: 'SAP' } },
   { id: 'weather', label: 'Wetter', icon: Search, toolId: 'weather_lookup', param: { location: 'Berlin' } },

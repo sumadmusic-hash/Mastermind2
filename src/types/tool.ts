@@ -67,7 +67,7 @@ export interface ToolExecutionContext {
 export const LEGACY_ID_MAP: Record<string, string> = {
   weather: 'weather_lookup',
   search: 'ddg_web_search',
-  news: 'news_search',
+  news: 'ai_search',
   stock: 'stock_price',
   calc: 'calculator',
   translate: 'translate_text',
@@ -75,11 +75,11 @@ export const LEGACY_ID_MAP: Record<string, string> = {
   report: 'generate_report',
   chart: 'chart_spec',
   company: 'company_lookup',
-  // Anbieter-Aliase der News-Kategorie: alle zeigten früher auf dieselbe
-  // DuckDuckGo-Instanz hinter news_search – heute ein Eintrag pro ID, damit
-  // alte Agent-Historie/Tool-Aufrufe weiter funktionieren.
-  webz_news: 'news_search',
-  webz_top_news: 'news_search',
-  gnews_search: 'news_search',
-  gnews_top_headlines: 'news_search',
+  // Nachrichten-IDs: das frühere news_search-Tool wurde entfernt – alte
+  // Agent-Historie/Tool-Aufrufe laufen jetzt über die KI-Suche (Jina).
+  news_search: 'ai_search',
+  webz_news: 'ai_search',
+  webz_top_news: 'ai_search',
+  gnews_search: 'ai_search',
+  gnews_top_headlines: 'ai_search',
 };

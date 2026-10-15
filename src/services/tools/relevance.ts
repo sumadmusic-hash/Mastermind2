@@ -8,14 +8,14 @@ const ALL_CALENDAR_TOOLS = ['calendar_create', 'calendar_list', 'calendar_update
 
 // Keywords mapped to tool categories
 const KEYWORD_MAP: Record<string, string[]> = {
-  search: ['ddg_web_search', 'web_search'],
-  web: ['ddg_web_search', 'url_fetch', 'web_search'],
+  search: ['ddg_web_search', 'web_search', 'ai_search'],
+  web: ['ddg_web_search', 'url_fetch', 'web_search', 'ai_search'],
   fetch: ['url_fetch'],
   url: ['url_fetch'],
-  // Nur das echte News-Tool anbieten – die webz_*/gnews_*-Aliase waren
-  // Deckblätter für dieselbe Quelle und provozierten Mehrfach-Fehlschläge.
-  news: ['news_search'],
-  aktuell: ['news_search'],
+  // Nachrichten werden über die KI-Suche (Jina) abgefragt – das frühere
+  // news_search-Tool wurde entfernt.
+  news: ['ai_search'],
+  aktuell: ['ai_search'],
   aktie: ['stock_price', 'stock_analysis'],
   stock: ['stock_price', 'stock_analysis'],
   kurs: ['stock_price'],
