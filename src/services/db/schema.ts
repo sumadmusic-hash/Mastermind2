@@ -86,6 +86,19 @@ export interface CalendarEvent {
   location?: string;
   participants?: string;
   createdAt: number;
+  /**
+   * RRULE-Teil einer wiederkehrenden Serie (vereinfachter iCal-Subset),
+   * z. B. "FREQ=WEEKLY;BYDAY=MO" oder "FREQ=MONTHLY;BYMONTHDAY=15".
+   * Felder: FREQ (DAILY/WEEKLY/MONTHLY/YEARLY), optional INTERVAL, BYDAY,
+   * BYMONTHDAY, COUNT, UNTIL (YYYY-MM-DD). leer/undefiniert = Einzeltermin.
+   */
+  recurrence?: string;
+  /** ID der Serie, zu der dieser Termin gehört (leer = nicht wiederkehrend) */
+  seriesId?: string;
+  /** Auf diese Serie zutreffende Ausnahmen (einmalige Termine werden nie erzeugt) */
+  exceptions?: string[];
+  /** true, wenn die Serie an diesem Termin endet (Count/Until erreicht oder gelöscht) */
+  seriesClosed?: boolean;
 }
 
 export class AppDatabase extends Dexie {
@@ -120,6 +133,11 @@ export class AppDatabase extends Dexie {
     // Version 2: lokaler Kalender (Termine) für calendar_*-Tools
     this.version(2).stores({
       calendarEvents: '++id, date, title, createdAt',
+    });
+    // Version 3: Wiederkehrende Termine – Serie-ID als Index (für
+    // calendar_update mit scope="series" und die Nachplanung des Materialisierers)
+    this.version(3).stores({
+      calendarEvents: '++id, date, title, createdAt, seriesId',
     });
   }
 }
