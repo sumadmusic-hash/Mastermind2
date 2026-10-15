@@ -119,9 +119,11 @@ toolRegistry.register(
 
 // Jina Search Grounding: kostenlose, KI-aufbereitete Suchantwort (Antwort + Quellen
 // in einem Request). Ohne API-Key mit Rate-Limit; optionaler Key per args.api_key.
+// Deckt auch Nachrichten ab (ersetzt das frühere news_search-Tool): aktuelle
+// Nachrichten einfach als Suchfrage anfragen, z.B. "Aktuelle Nachrichten zu X".
 toolRegistry.register(
-  def('ai_search', 'KI-Suche (Jina)', 'Token-sparende Recherche: liefert eine bereits von einer KI aufbereitete Kurzantwort mit Quellenangaben. Erspart deiner KI das Lesen ganzer Seiten. Optional api_key für höheres Rate-Limit.', 'search',
-    { query: { type: 'string', description: 'Suchfrage' }, api_key: { type: 'string', description: 'Optional: Jina-API-Key (erhöht Rate-Limit)' } },
+  def('ai_search', 'KI-Suche (Jina)', 'Token-sparende Recherche: liefert eine bereits von einer KI aufbereitete Kurzantwort mit Quellenangaben. Erspart deiner KI das Lesen ganzer Seiten. Auch für aktuelle Nachrichten nutzen (z.B. Frage "Aktuelle Nachrichten zu …"). Optional api_key für höheres Rate-Limit.', 'search',
+    { query: { type: 'string', description: 'Suchfrage (auch für Nachrichten, z.B. "Aktuelle Nachrichten zu Berlin")' }, api_key: { type: 'string', description: 'Optional: Jina-API-Key (erhöht Rate-Limit)' } },
     ['network']),
   async (args) => {
     const query = args.query as string;
@@ -181,46 +183,9 @@ toolRegistry.register(
   }
 );
 
-// --- NEWS TOOLS ---
-// GDELT DOC 2.0 API: kostenlose, echte Nachrichtenquelle (Aktualität!), CORS-fähig,
-// ohne API-Key. Die DuckDuckGo-Instant-Answer-API liefert dagegen fast nie
-// tagesaktuelle Newstreffer – allgemeine Themen wie "Deutschland" endeten dort
-// stets in RelatedTopics=[] und damit in Scheinbarren "keine Treffer"-Meldungen.
-// Drosselung: max. 1 Request / 5 s -> Antwort ist text/plain mit JSON oder
-// Rate-Limit-Klartext; beides wird erkannt (JSON-Parse schlägt fehl -> Retry).
-interface GdeltArticle { url?: string; title?: string; domain?: string; seendate?: string; language?: string }
-
-async function searchGdeltNews(query: string, lang: string): Promise<GdeltArticle[]> {
-  // GDELT erwartet Quell-Sprachcodes (german/eng…), unsere Tools bekommen de/en
-  const sourceLang = /^de/i.test(lang) ? 'german' : /^[a-z]{2}$/i.test(lang) ? lang.slice(0, 3) : '';
-  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}` +
-    `&mode=artlist&maxrecords=8${sourceLang ? `&sourcelang=${sourceLang}` : ''}`;
-  const data = await fetchJson<{ articles?: GdeltArticle[] }>(url, { timeout: 20000, retries: 3, label: 'GDELT' });
-  return (Array.isArray(data?.articles) ? data.articles : []).filter(a => a.url && a.title);
-}
-
-toolRegistry.register(
-  def('news_search', 'Nachrichten-Suche', 'Aktuelle Nachrichten suchen (GDELT, tagesschnell)', 'news',
-    { query: { type: 'string', description: 'Suchbegriff' }, lang: { type: 'string', description: 'Sprache (de, en)' } },
-    ['network']),
-  async (args) => {
-    const query = String(args.query ?? '').trim();
-    if (!query) return err('Kein Suchbegriff angegeben');
-    const lang = String(args.lang ?? 'de');
-    try {
-      const articles = await searchGdeltNews(query, lang);
-      if (articles.length === 0) return emptyErr(`Keine Nachrichtentreffer für "${query}"`);
-      const results = articles.map(a => ({
-        title: String(a.title ?? '').trim(),
-        url: String(a.url ?? ''),
-        source: a.domain || undefined,
-        snippet: a.seendate ? `Erschienen: ${a.seendate.slice(0, 8)}` : undefined,
-      })).filter(r => r.title && r.url);
-      if (results.length === 0) return emptyErr(`Keine verwertbaren Nachrichtentreffer für "${query}"`);
-      return ok(results, results);
-    } catch (e) { return err(`Nachrichten-Fehler: ${(e as Error).message}`); }
-  }
-);
+// --- NEWS ---
+// Das frühere news_search-Tool (GDELT) wurde entfernt: Nachrichten werden
+// jetzt über die KI-Suche (Jina, ai_search) abgefragt.
 
 // --- FINANCE TOOLS ---
 
@@ -771,7 +736,7 @@ toolRegistry.register(
 );
 
 
-// --- ADDITIONAL NEWS / ALIAS-WERKZEUGE ---
+// --- ADDITIONAL ALIAS-WERKZEUGE ---
 // Frühere Alias-Registrierungen von 'web_search' (als Duplikat mit der ID des
 // optimierten Wikipedia-Tools) sowie webz_*/gnews_* als reine news_search-
 // Durchleister wurden entfernt:
@@ -780,8 +745,9 @@ toolRegistry.register(
 // - Die Aliase gaben vor, separate Anbieter (Webz/GNews) zu sein, zogen aber
 //   alle dieselbe Quelle nach – vier "verschiedene" Tools meldeten deshalb
 //   parallel ein und denselben "keine Treffer"-Fehler.
-// Stattdessen: echte Legacies für die Anbieter-Namen, damit Agent-Historie mit
-// alten IDs weiterfunktioniert; die Ausführung läuft über das eine news_search.
+// Auch das news_search-Tool selbst wurde entfernt; die Legacy-Einträge in
+// LEGACY_ID_MAP (types/tool.ts) leiten alte Nachrichten-Aufrufe jetzt auf
+// die KI-Suche (Jina, ai_search) um.
 
 toolRegistry.register(
   def('stock_analysis', 'Aktien-Analyse', 'Detaillierte Aktien-Analyse', 'finance',
